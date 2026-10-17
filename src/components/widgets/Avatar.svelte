@@ -6,6 +6,7 @@
 	export let index = 0;
 	export let size = 32;
 	export let dim = false;
+	export let bot = false;
 </script>
 
 <div
@@ -14,7 +15,7 @@
 	style="--size: {size}px; background: {SEAT_COLORS[index % SEAT_COLORS.length]}"
 	title={name}
 >
-	{name.trim().charAt(0).toUpperCase() || "?"}
+	{bot ? "🤖" : name.trim().charAt(0).toUpperCase() || "?"}
 </div>
 
 <style>

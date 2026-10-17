@@ -42,7 +42,9 @@
 	$: finished = spectating || solved || guesses >= ROWS || !!$me?.done;
 	$: keyStates = letterStates(board.words.slice(0, guesses), board.state.slice(0, guesses));
 	$: seats = $snapshot.players.map((p, index) => ({ p, index }));
-	$: opponents = seats.filter((s) => s.p.id !== $snapshot.youId);
+	// Closest to solving first, so the biggest threats stay on screen in a big lobby
+	$: opponents = seats.filter((s) => s.p.id !== $snapshot.youId).sort((a, b) => threat(b.p) - threat(a.p));
+	$: many = opponents.length > 3;
 	$: playing = opponents.filter((s) => !s.p.spectating);
 	$: waitingOn = playing.filter((s) => !s.p.done).length;
 	$: mySeat = seats.find((s) => s.p.id === $snapshot.youId);
@@ -149,6 +151,12 @@
 		}
 	}
 
+	function threat(p: PlayerView) {
+		if (p.spectating) return -1;
+		if (p.solved) return 100 - p.colors.length;
+		return Math.max(0, ...p.colors.map((r) => r.filter((c) => c === "🟩").length * 10 + r.filter((c) => c === "🟨").length));
+	}
+
 	function status(p: PlayerView) {
 		if (p.spectating) return "next round";
 		if (p.solved) return `solved in ${p.colors.length}`;
@@ -173,7 +181,7 @@
 	{/if}
 
 	{#if opponents.length}
-		<div class="opponents" class:big={spectating}>
+		<div class="opponents" class:big={spectating} class:many>
 			{#each opponents as { p, index } (p.id)}
 				<div
 					class="opponent"
@@ -182,7 +190,7 @@
 					class:onfire={stadium && !p.solved && (hype[p.id] ?? 0) >= 80}
 				>
 					<div class="who">
-						<Avatar name={p.name} {index} size={spectating ? 24 : 16} dim={!p.connected} />
+						<Avatar name={p.name} {index} size={spectating ? 24 : 16} dim={!p.connected} bot={p.bot} />
 						<span class="name">{p.name}</span>
 					</div>
 					<MiniBoard colors={p.colors} size={spectating ? 22 : 10} />
@@ -276,6 +284,18 @@
 			flex-wrap: wrap;
 			gap: 16px;
 			padding: 16px 8px;
+		}
+		&.many {
+			flex-wrap: wrap;
+			max-height: 28vh;
+			overflow-y: auto;
+			.opponent {
+				max-width: none;
+				width: 72px;
+			}
+		}
+		&.big.many {
+			max-height: none;
 		}
 	}
 	.opponent {

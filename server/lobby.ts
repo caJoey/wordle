@@ -3,12 +3,15 @@ import {
 	CODE_LENGTH,
 	COLS,
 	DEFAULT_ROUND_SECONDS,
+	BOT_DIFFICULTIES,
+	MAX_BOTS,
 	MAX_PLAYERS,
 	RECONNECT_GRACE_SECONDS,
 	ROWS,
 	THEME_MAX_LENGTH,
 	THEME_PICK_SECONDS,
 	type Ack,
+	type BotDifficulty,
 	type LetterState,
 	type LobbySnapshot,
 	type Phase,
@@ -45,6 +48,10 @@ export interface Timings {
 	graceMs: number;
 	generateTimeoutMs: number;
 	emptyLobbyMs: number;
+	/** A bot waits a random time in its difficulty's [min, max] range before each guess. */
+	botDelayMs: Record<BotDifficulty, [number, number]>;
+	/** Give up on Gemma for one bot guess after this long and play a random candidate. */
+	botTimeoutMs: number;
 }
 
 export const DEFAULT_TIMINGS: Timings = {
@@ -52,6 +59,8 @@ export const DEFAULT_TIMINGS: Timings = {
 	graceMs: RECONNECT_GRACE_SECONDS * 1000,
 	generateTimeoutMs: 20_000,
 	emptyLobbyMs: 5 * 60_000,
+	botDelayMs: { easy: [12_000, 24_000], medium: [8_000, 16_000], hard: [4_000, 9_000] },
+	botTimeoutMs: 10_000,
 };
 
 export const MIN_ROUND_SECONDS = 60;
@@ -61,6 +70,32 @@ export const PRESET_THEMES = ["animals", "food", "sports", "nature", "music"];
 export const GENERATOR_UNAVAILABLE = "Theme generator unavailable, using a random word";
 
 export type GeneratePool = (theme: string, exclude?: string[]) => Promise<string[]>;
+
+/** What a bot is told: its own (difficulty-filtered) clues, and the theme on hard. Never a word list. */
+export type BotTurn = { theme?: string; history: { word: string; colors: LetterState[]; }[]; };
+/** Choose a bot's next guess. Undefined or a rejection means "play a random candidate". */
+export type BotGuess = (turn: BotTurn) => Promise<string | undefined>;
+
+export const BOT_NAME = "Gemma Bot";
+export const DEFAULT_BOT_DIFFICULTY: BotDifficulty = "medium";
+
+/** "noGrays" forgets which letters are absent, so the bot keeps retrying ruled-out letters. */
+export type CluesUsed = "noGrays" | "all";
+
+/**
+ * What a bot may use, by difficulty. Clues matter most; measured with random picks over 400 games:
+ * greens + yellows solves 66% (avg 4.4 guesses), all clues 98% (avg 4.0). With Gemma choosing,
+ * all clues averaged 3.6, and adding the theme gets hard bots to 2-4 guesses.
+ */
+export const BOT_SKILL: Record<BotDifficulty, { clues: CluesUsed; theme: boolean; }> = {
+	easy: { clues: "noGrays", theme: false },
+	medium: { clues: "all", theme: false },
+	hard: { clues: "all", theme: true },
+};
+
+export function isBotDifficulty(d: unknown): d is BotDifficulty {
+	return (BOT_DIFFICULTIES as readonly unknown[]).includes(d);
+}
 
 export interface Player {
 	id: string;
@@ -80,6 +115,9 @@ export interface Player {
 	solveMs?: number;
 	spectating: boolean;
 	wins: number;
+	bot: boolean;
+	botDifficulty?: BotDifficulty;
+	botTimer?: unknown;
 }
 
 export interface Lobby {
@@ -118,17 +156,32 @@ export interface LobbyHooks {
 
 export interface LobbyManagerOptions {
 	generatePool: GeneratePool;
+	botGuess?: BotGuess;
 	scheduler?: Scheduler;
 	timings?: Partial<Timings>;
 	/** [0, 1) random source for answer / preset picks. */
 	random?: () => number;
 	hooks?: LobbyHooks;
 	logger?: Pick<Console, "error" | "log">;
+	/**
+	 * Batch snapshots: changes within this window go out as one broadcast. 0 = send immediately.
+	 * With 50 players every broadcast is 50 snapshots of 50 boards, so bursts of guesses add up.
+	 */
+	publishDelayMs?: number;
 }
 
 // ---------------------------------------------------------------- ranking
 
 export type RankInput = { id: string; solved: boolean; colors: LetterState[][]; solveMs?: number; };
+
+/** Answer words not yet guessed that fit the clues the bot uses (see CluesUsed). */
+export function candidatesFor(history: { word: string; colors: LetterState[]; }[], clues: CluesUsed = "all") {
+	const fits = (w: string, h: { word: string; colors: LetterState[]; }) => clues === "all"
+		? evaluateGuess(h.word, w).every((c, i) => c === h.colors[i])
+		: h.colors.every((c, i) =>
+			c === "🟩" ? w[i] === h.word[i] : c === "🟨" ? w[i] !== h.word[i] && w.includes(h.word[i]) : true);
+	return answerWords.filter((w) => !history.some((h) => h.word === w) && history.every((h) => fits(w, h)));
+}
 
 /** Greens then yellows of the best row. */
 export function bestRow(colors: LetterState[][]) {
@@ -191,6 +244,9 @@ export class LobbyManager {
 	readonly lobbies = new Map<string, Lobby>();
 	hooks: LobbyHooks;
 	private readonly generatePool: GeneratePool;
+	private readonly botGuess: BotGuess;
+	private readonly publishDelayMs: number;
+	private readonly publishTimers = new Map<Lobby, unknown>();
 	private readonly sched: Scheduler;
 	private readonly t: Timings;
 	private readonly random: () => number;
@@ -198,6 +254,8 @@ export class LobbyManager {
 
 	constructor(opts: LobbyManagerOptions) {
 		this.generatePool = opts.generatePool;
+		this.botGuess = opts.botGuess ?? (async () => undefined);
+		this.publishDelayMs = opts.publishDelayMs ?? 0;
 		this.sched = opts.scheduler ?? realScheduler;
 		this.t = { ...DEFAULT_TIMINGS, ...opts.timings };
 		this.random = opts.random ?? Math.random;
@@ -211,6 +269,14 @@ export class LobbyManager {
 
 	/** Broadcast the current state, then clear the one-off notice. */
 	publish(l: Lobby) {
+		if (l.deleted) return;
+		if (!this.publishDelayMs) return this.flush(l);
+		if (this.publishTimers.has(l)) return;
+		this.publishTimers.set(l, this.sched.setTimeout(() => this.flush(l), this.publishDelayMs));
+	}
+
+	private flush(l: Lobby) {
+		this.publishTimers.delete(l);
 		if (l.deleted) return;
 		this.hooks.onUpdate?.(l);
 		l.notice = undefined;
@@ -356,6 +422,47 @@ export class LobbyManager {
 		return { ok: true, colors };
 	}
 
+	addBot(code: string, playerId: string, difficulty: unknown = DEFAULT_BOT_DIFFICULTY): Ack {
+		const l = this.lobbies.get(code);
+		if (!l) return fail("Lobby not found");
+		if (l.hostId !== playerId) return fail("Only the host can add bots");
+		if (l.phase !== "LOBBY" && l.phase !== "RESULTS") return fail("Add bots between rounds");
+		if (l.players.length >= MAX_PLAYERS) return fail("Lobby is full");
+		if (l.players.filter((p) => p.bot).length >= MAX_BOTS) return fail(`At most ${MAX_BOTS} bots`);
+		if (!isBotDifficulty(difficulty)) return fail("Unknown difficulty");
+		const bot = this.addPlayer(l, this.uniqueName(l, BOT_NAME));
+		bot.bot = true;
+		bot.botDifficulty = difficulty;
+		bot.ready = true;
+		bot.spectating = l.phase === "RESULTS";
+		this.addNotice(l, `${bot.name} joined`);
+		this.publish(l);
+		return { ok: true };
+	}
+
+	removeBot(code: string, playerId: string, botId: unknown): Ack {
+		const l = this.lobbies.get(code);
+		if (!l) return fail("Lobby not found");
+		if (l.hostId !== playerId) return fail("Only the host can remove bots");
+		const bot = l.players.find((p) => p.id === botId && p.bot);
+		if (!bot) return fail("Bot not found");
+		this.removePlayer(l, bot);
+		this.publish(l);
+		return { ok: true };
+	}
+
+	setBotDifficulty(code: string, playerId: string, botId: unknown, difficulty: unknown): Ack {
+		const l = this.lobbies.get(code);
+		if (!l) return fail("Lobby not found");
+		if (l.hostId !== playerId) return fail("Only the host can change bots");
+		const bot = l.players.find((p) => p.id === botId && p.bot);
+		if (!bot) return fail("Bot not found");
+		if (!isBotDifficulty(difficulty)) return fail("Unknown difficulty");
+		bot.botDifficulty = difficulty;
+		this.publish(l);
+		return { ok: true };
+	}
+
 	ready(code: string, playerId: string, ready: unknown): Ack {
 		const l = this.lobbies.get(code);
 		const p = l?.players.find((x) => x.id === playerId);
@@ -383,7 +490,9 @@ export class LobbyManager {
 				done: p.done,
 				spectating: p.spectating,
 				wins: p.wins,
+				bot: p.bot,
 			};
+			if (p.bot) v.botDifficulty = p.botDifficulty ?? DEFAULT_BOT_DIFFICULTY;
 			if (results || (l.phase === "PLAYING" && p.id === youId)) v.words = [...p.words];
 			if (p.solveMs !== undefined) v.solveMs = p.solveMs;
 			return v;
@@ -422,6 +531,7 @@ export class LobbyManager {
 			done: false,
 			spectating: false,
 			wins: 0,
+			bot: false,
 		};
 		l.players.push(p);
 		return p;
@@ -454,6 +564,7 @@ export class LobbyManager {
 	}
 
 	private setPhase(l: Lobby, phase: Phase) {
+		this.clearBotTimers(l);
 		this.clearTimer(l.phaseTimer);
 		l.phaseTimer = undefined;
 		l.phase = phase;
@@ -465,13 +576,15 @@ export class LobbyManager {
 		l.emptyTimer = undefined;
 	}
 
+	/** Bots don't keep a lobby alive: it empties when its last connected human goes. */
 	private checkEmpty(l: Lobby) {
 		if (l.deleted) return;
-		if (l.players.length === 0) return this.deleteLobby(l);
-		if (l.players.some((p) => p.connected) || l.emptyTimer !== undefined) return;
+		if (!l.players.some((p) => !p.bot)) return this.deleteLobby(l);
+		const humansOnline = () => l.players.some((p) => p.connected && !p.bot);
+		if (humansOnline() || l.emptyTimer !== undefined) return;
 		l.emptyTimer = this.sched.setTimeout(() => {
 			l.emptyTimer = undefined;
-			if (!l.players.some((p) => p.connected)) this.deleteLobby(l);
+			if (!humansOnline()) this.deleteLobby(l);
 		}, this.t.emptyLobbyMs);
 	}
 
@@ -480,7 +593,10 @@ export class LobbyManager {
 		l.deleted = true;
 		this.clearTimer(l.phaseTimer);
 		this.clearTimer(l.emptyTimer);
+		this.clearTimer(this.publishTimers.get(l));
+		this.publishTimers.delete(l);
 		l.phaseTimer = l.emptyTimer = undefined;
+		this.clearBotTimers(l);
 		for (const p of l.players) {
 			this.clearTimer(p.graceTimer);
 			p.graceTimer = undefined;
@@ -508,16 +624,18 @@ export class LobbyManager {
 		const i = l.players.indexOf(p);
 		if (i < 0) return !l.deleted;
 		this.clearTimer(p.graceTimer);
-		p.graceTimer = undefined;
+		this.clearTimer(p.botTimer);
+		p.graceTimer = p.botTimer = undefined;
 		l.players.splice(i, 1);
 		this.hooks.onRemoved?.(l, p.id, reason);
-		if (l.players.length === 0) {
+		if (!l.players.some((x) => !x.bot)) {
 			this.deleteLobby(l);
 			return false;
 		}
 		this.addNotice(l, `${p.name} left`);
 		if (l.hostId === p.id) {
-			const next = l.players.find((x) => x.connected) ?? l.players[0];
+			const humans = l.players.filter((x) => !x.bot);
+			const next = humans.find((x) => x.connected) ?? humans[0];
 			l.hostId = next.id;
 			this.addNotice(l, `${next.name} is now the host`);
 		}
@@ -552,14 +670,15 @@ export class LobbyManager {
 		for (const p of l.players) {
 			p.colors = [];
 			p.words = [];
-			p.solved = p.done = p.ready = p.spectating = false;
+			p.solved = p.done = p.spectating = false;
+			p.ready = p.bot;
 			p.solveMs = undefined;
 		}
 		this.enterThemePick(l, this.nextPicker(l));
 	}
 
 	private nextPicker(l: Lobby) {
-		const eligible = l.players.filter((p) => p.connected);
+		const eligible = l.players.filter((p) => p.connected && !p.bot);
 		return eligible.find((p) => p.seq > l.rotationSeq) ?? eligible[0];
 	}
 
@@ -579,7 +698,7 @@ export class LobbyManager {
 
 	private skipPicker(l: Lobby) {
 		l.skips++;
-		const eligible = l.players.filter((p) => p.connected).length;
+		const eligible = l.players.filter((p) => p.connected && !p.bot).length;
 		const next = this.nextPicker(l);
 		if (!next || l.skips >= Math.max(1, eligible)) return this.usePreset(l);
 		this.addNotice(l, `${next.name} picks the theme`);
@@ -667,7 +786,61 @@ export class LobbyManager {
 			this.endRound(l);
 			this.publish(l);
 		});
+		for (const p of l.players) if (p.bot && !p.spectating) this.scheduleBot(l, p);
 		this.checkRoundEnd(l);
+	}
+
+	// ------------------------------------------------------------ bots
+
+	private clearBotTimers(l: Lobby) {
+		for (const p of l.players) {
+			this.clearTimer(p.botTimer);
+			p.botTimer = undefined;
+		}
+	}
+
+	private scheduleBot(l: Lobby, bot: Player) {
+		const [botMinMs, botMaxMs] = this.t.botDelayMs[bot.botDifficulty ?? DEFAULT_BOT_DIFFICULTY];
+		this.clearTimer(bot.botTimer);
+		bot.botTimer = this.sched.setTimeout(() => {
+			bot.botTimer = undefined;
+			void this.botTurn(l, bot);
+		}, botMinMs + this.random() * (botMaxMs - botMinMs));
+	}
+
+	/**
+	 * One bot guess. Gemma only sees the bot's own clues, cut down by difficulty (BOT_SKILL), plus the
+	 * theme on hard, and has to come up with a word itself. Any real word it hasn't played is accepted,
+	 * even one that breaks its clues. Only if Gemma fails do we play a random word that fits them.
+	 */
+	private async botTurn(l: Lobby, bot: Player) {
+		const roundId = l.roundId;
+		const stale = () => l.deleted || l.roundId !== roundId || l.phase !== "PLAYING" || !l.players.includes(bot) || bot.done;
+		if (stale()) return;
+		const skill = BOT_SKILL[bot.botDifficulty ?? DEFAULT_BOT_DIFFICULTY];
+		const history = bot.words.map((word, i) => ({
+			word,
+			colors: skill.clues === "all" ? bot.colors[i] : bot.colors[i].map((c): LetterState => (c === "⬛" ? "🔳" : c)),
+		}));
+		let word: string | undefined;
+		let timer: unknown;
+		try {
+			word = await Promise.race([
+				Promise.resolve().then(() => this.botGuess({ theme: skill.theme ? l.theme : undefined, history })),
+				new Promise<undefined>((resolve) => (timer = this.sched.setTimeout(() => resolve(undefined), this.t.botTimeoutMs))),
+			]);
+		} catch (err) {
+			this.log.error(`[lobby ${l.code}] ${bot.name} guess failed:`, err instanceof Error ? err.message : err);
+		}
+		this.clearTimer(timer);
+		if (stale()) return;
+		if (!word || !isValidGuess(word) || bot.words.includes(word)) {
+			const candidates = candidatesFor(history, skill.clues);
+			word = candidates.length ? candidates[Math.floor(this.random() * candidates.length)] : undefined;
+		}
+		if (!word) return;
+		this.guess(l.code, bot.id, word);
+		if (!stale()) this.scheduleBot(l, bot);
 	}
 
 	/**
@@ -682,7 +855,7 @@ export class LobbyManager {
 		this.setPhase(l, "RESULTS");
 		const playing = l.players.filter((p) => !p.spectating);
 		for (const p of l.players) {
-			p.ready = false;
+			p.ready = p.bot;
 			if (!p.spectating) p.done = true;
 		}
 		const ranking = rankPlayers(playing);
@@ -694,8 +867,9 @@ export class LobbyManager {
 
 	private checkAllReady(l: Lobby) {
 		if (l.phase !== "RESULTS") return;
-		let eligible = l.players.filter((p) => p.connected && !p.spectating);
-		if (!eligible.length) eligible = l.players.filter((p) => p.connected);
+		// Bots are always ready, so only humans hold up the next round
+		let eligible = l.players.filter((p) => p.connected && !p.spectating && !p.bot);
+		if (!eligible.length) eligible = l.players.filter((p) => p.connected && !p.bot);
 		if (eligible.length && eligible.every((p) => p.ready)) this.beginRound(l);
 	}
 }

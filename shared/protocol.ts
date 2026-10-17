@@ -9,7 +9,12 @@ export type Phase = "LOBBY" | "THEME_PICK" | "GENERATING" | "PLAYING" | "RESULTS
 
 export const ROWS = 6;
 export const COLS = 5;
-export const MAX_PLAYERS = 4;
+export const MAX_PLAYERS = 50;
+/** Each bot guess is a Gemma call, and the quota is shared by every lobby on the server. */
+export const MAX_BOTS = 4;
+
+export const BOT_DIFFICULTIES = ["easy", "medium", "hard"] as const;
+export type BotDifficulty = (typeof BOT_DIFFICULTIES)[number];
 export const CODE_LENGTH = 6;
 export const THEME_MAX_LENGTH = 40;
 export const THEME_PICK_SECONDS = 30;
@@ -39,6 +44,10 @@ export type PlayerView = {
 	spectating: boolean;
 	/** Total round wins in this lobby. */
 	wins: number;
+	/** A Gemma-powered bot. Bots never pick themes and are always ready. */
+	bot: boolean;
+	/** Only set for bots. */
+	botDifficulty?: BotDifficulty;
 };
 
 export type RankEntry = {
@@ -96,7 +105,13 @@ export interface ClientToServerEvents {
 	"theme:submit": (data: { theme: string; }, ack: (res: Ack) => void) => void;
 	/** PLAYING phase only. Error text is shown to the player, e.g. "Not in word list". */
 	"guess:submit": (data: { word: string; }, ack: (res: Ack<{ colors: LetterState[]; }>) => void) => void;
-	/** RESULTS phase. When every connected, non-spectating player is ready the next round starts. */
+	/** Host only, LOBBY or RESULTS phase. Bots added during RESULTS play from the next round. */
+	"bot:add": (data: { difficulty: BotDifficulty; }, ack: (res: Ack) => void) => void;
+	/** Host only, any phase. */
+	"bot:remove": (data: { playerId: string; }, ack: (res: Ack) => void) => void;
+	/** Host only, any phase; applies from the bot's next guess. */
+	"bot:difficulty": (data: { playerId: string; difficulty: BotDifficulty; }, ack: (res: Ack) => void) => void;
+	/** RESULTS phase. When every connected, non-spectating human is ready the next round starts. */
 	"player:ready": (data: { ready: boolean; }, ack: (res: Ack) => void) => void;
 }
 

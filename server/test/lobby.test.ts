@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { LetterState, LobbySnapshot, Session } from "../../shared/protocol";
+import { MAX_PLAYERS, type LetterState, type LobbySnapshot, type Session } from "../../shared/protocol";
 import {
 	GENERATOR_UNAVAILABLE,
 	LobbyManager,
@@ -93,7 +93,7 @@ describe("rankPlayers", () => {
 });
 
 describe("LobbyManager", () => {
-	it("creates 6-digit codes, dedupes names, caps players at 4", () => {
+	it("creates 6-digit codes, dedupes names, caps players at MAX_PLAYERS", () => {
 		const t = setup();
 		const { s } = t.create("  Alice  ");
 		assert.match(s.code, /^\d{6}$/);
@@ -105,9 +105,10 @@ describe("LobbyManager", () => {
 		assert.equal(t.m.join(s.code, "   ").ok, false);
 		t.join(s.code, "A very long name that overflows");
 		assert.equal(l.players[3].name.length, 16);
+		for (let i = l.players.length; i < MAX_PLAYERS; i++) t.join(s.code, `Player ${i}`);
 		assert.deepEqual(t.m.join(s.code, "Eve"), { ok: false, error: "Lobby is full" });
 		assert.deepEqual(t.m.join("000000x", "Eve"), { ok: false, error: "Lobby not found" });
-		assert.equal(t.last.get(b.playerId)!.players.length, 4);
+		assert.equal(t.last.get(b.playerId)!.players.length, MAX_PLAYERS);
 	});
 
 	it("settings: host + LOBBY only, clamped", () => {
