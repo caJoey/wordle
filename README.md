@@ -43,7 +43,7 @@ docker run -p 3001:3001 -e GEMMA_API=your-key themed-wordle
 
 The image builds the client, then runs the server with `NODE_ENV=production`. It listens on `$PORT`, which most hosts set for you. Set `GEMMA_API` as a secret in the host's environment settings. Health checks can use `GET /healthz`. Lobbies are kept in memory, so run a single instance.
 
-The theme request sends the theme and asks Gemma for 20 five-letter candidates. The bundled word lists stay on the server and are used to filter the response.
+The theme request sends the theme and asks Gemma for as many relevant five-letter candidates as it can provide, up to 20. The bundled word lists stay on the server and are used to filter the response.
 
 CI (`.github/workflows/ci.yml`) runs install, check, test and build on pushes and PRs to `main`.
 
@@ -51,7 +51,7 @@ CI (`.github/workflows/ci.yml`) runs install, check, test and build on pushes an
 
 - `shared/`: code used by both sides: the Socket.IO event contract (`protocol.ts`), guess scoring and validation (`wordle.ts`), and the word lists (2,315 original answer words plus 10,657 additional valid guesses; both lists are eligible multiplayer answers).
 - `server/`: Express + Socket.IO. It holds lobbies in memory, runs rounds and timers, and scores every guess on the server, so clients never see the answer before the round ends.
-- `server/words/gemma.ts`: sends only the theme to `gemma-4-26b-a4b-it` (thinking set to minimal, JSON output) and asks for 20 five-letter candidates. It keeps only unique words found in either bundled list and drops answers already used in the lobby. If fewer than 5 words remain, it retries with broader wording, then asks the players for a broader theme.
+- `server/words/gemma.ts`: sends only the theme to `gemma-4-26b-a4b-it` (thinking set to minimal, JSON output) and asks for as many relevant five-letter candidates as it can provide, up to 20. It keeps only unique words found in either bundled list and drops answers already used in the lobby. If no words remain, it retries with broader wording, then asks the players for a broader theme.
 - `src/`: the Svelte client (lobby, theme picking, boards, results), built with Vite.
 
 ## License
