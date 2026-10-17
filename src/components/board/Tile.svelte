@@ -1,8 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from "svelte";
-
-	import { mode } from "../../stores";
-
+	import type { LetterState } from "../../../shared/protocol";
 	import { DELAY_INCREMENT, ROWS } from "../../utils";
 
 	export let value = "";
@@ -19,15 +16,10 @@
 	$: !value && (animation = "");
 
 	// ensure all animations play
-	const unsub = mode.subscribe(() => {
-		animation = "";
-		s = "🔳";
-		setTimeout(() => (s = ""), 10);
-	});
+	s = "🔳";
+	setTimeout(() => (s = ""), 10);
 	// prevent pop animation from playing at the beginning
 	setTimeout(() => (pop = true), 200);
-
-	onDestroy(unsub);
 </script>
 
 <div
@@ -54,7 +46,7 @@
 		}
 	}
 	.tile {
-		font-size: 2rem;
+		font-size: min(2rem, 7vh);
 		font-weight: bold;
 		text-transform: uppercase;
 		position: relative;

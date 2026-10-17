@@ -1,71 +1,134 @@
-<script context="module" lang="ts">
-	import {
-		modeData,
-		seededRandomInt,
-		Stats,
-		GameState,
-		Settings,
-		LetterStates,
-		getWordNumber,
-		words,
-	} from "./utils";
-	import Game from "./components/Game.svelte";
-	import { letterStates, settings, mode } from "./stores";
-	import { GameMode } from "./enums";
-	import { Toaster } from "./components/widgets";
-	import { setContext } from "svelte";
-
-	document.title = "Wordle+ | An infinite word guessing game";
-</script>
-
 <script lang="ts">
-	export let version: string;
-	setContext("version", version);
-	localStorage.setItem("version", version);
-	let stats: Stats;
-	let word: string;
-	let state: GameState;
+	import { onDestroy } from "svelte";
+	import Header from "./components/Header.svelte";
+	import Modal from "./components/Modal.svelte";
+	import { Switch, Toaster } from "./components/widgets";
+	import Home from "./components/screens/Home.svelte";
+	import Lobby from "./components/screens/Lobby.svelte";
+	import ThemePick from "./components/screens/ThemePick.svelte";
+	import Generating from "./components/screens/Generating.svelte";
+	import Playing from "./components/screens/Playing.svelte";
+	import Results from "./components/screens/Results.svelte";
+	import { leaveLobby, messages, session, snapshot, status } from "./socket";
+	import { settings } from "./stores";
+
+	document.title = "Wordle+ Party | Themed multiplayer Wordle";
+
 	let toaster: Toaster;
+	let showSettings = false;
 
-	settings.set(new Settings(localStorage.getItem("settings")));
-	settings.subscribe((s) => localStorage.setItem("settings", JSON.stringify(s)));
+	const unsub = messages.subscribe((m) => m && toaster?.pop(m.text, m.seconds));
+	onDestroy(unsub);
 
-	const hash = window.location.hash.slice(1).split("/");
-	const modeVal: GameMode = !isNaN(GameMode[hash[0]])
-		? GameMode[hash[0]]
-		: +localStorage.getItem("mode") || modeData.default;
-	mode.set(modeVal);
-	// If this is a link to a specific word make sure that that is the word
-	if (!isNaN(+hash[1]) && +hash[1] < getWordNumber(modeVal)) {
-		modeData.modes[modeVal].seed =
-			(+hash[1] - 1) * modeData.modes[modeVal].unit + modeData.modes[modeVal].start;
-		modeData.modes[modeVal].historical = true;
+	$: {
+		const root = document.documentElement;
+		root.classList.toggle("light", !$settings.dark);
+		root.classList.toggle("colorblind", $settings.colorblind);
 	}
-	mode.subscribe((m) => {
-		localStorage.setItem("mode", `${m}`);
-		window.location.hash = GameMode[m];
-		stats = new Stats(localStorage.getItem(`stats-${m}`) || m);
-		word = words.words[seededRandomInt(0, words.words.length, modeData.modes[m].seed)];
-		if (modeData.modes[m].historical) {
-			state = new GameState(m, localStorage.getItem(`state-${m}-h`));
-		} else {
-			state = new GameState(m, localStorage.getItem(`state-${m}`));
-		}
-		// Set the letter states when data for a new game mode is loaded so the keyboard is correct
-		letterStates.set(new LetterStates(state.board));
-	});
 
-	$: saveState(state);
-	function saveState(state: GameState) {
-		if (modeData.modes[$mode].historical) {
-			localStorage.setItem(`state-${$mode}-h`, state.toString());
-		} else {
-			localStorage.setItem(`state-${$mode}`, state.toString());
-		}
+	function leave() {
+		if (confirm("Leave this game?")) leaveLobby();
 	}
+
+	// A session exists but its snapshot hasn't arrived yet (reloading or reconnecting)
+	$: resuming = !!$session && !$snapshot;
 </script>
 
 <Toaster bind:this={toaster} />
-{#if toaster}
-	<Game {stats} bind:word {toaster} bind:game={state} />
-{/if}
+
+<main>
+	<Header
+		inLobby={!!$snapshot}
+		on:settings={() => (showSettings = true)}
+		on:leave={leave}
+	/>
+	{#if $status !== "connected"}
+		<div class="connection">
+			{$status === "connecting" ? "Connecting…" : "Disconnected, reconnecting…"}
+		</div>
+	{/if}
+	<div class="screen">
+		{#if $snapshot}
+			{#if $snapshot.phase === "LOBBY"}
+				<Lobby />
+			{:else if $snapshot.phase === "THEME_PICK"}
+				<ThemePick />
+			{:else if $snapshot.phase === "GENERATING"}
+				<Generating />
+			{:else if $snapshot.phase === "PLAYING"}
+				{#key $snapshot.roundId}
+					<Playing />
+				{/key}
+			{:else if $snapshot.phase === "RESULTS"}
+				<Results />
+			{/if}
+		{:else if resuming}
+			<div class="resuming">Rejoining game…</div>
+		{:else}
+			<Home />
+		{/if}
+	</div>
+</main>
+
+<Modal bind:visible={showSettings}>
+	<h3>settings</h3>
+	<div class="setting">
+		<div class="title">Dark Theme</div>
+		<Switch bind:value={$settings.dark} />
+	</div>
+	<div class="setting">
+		<div>
+			<div class="title">Color Blind Mode</div>
+			<div class="desc">High contrast colors</div>
+		</div>
+		<Switch bind:value={$settings.colorblind} />
+	</div>
+</Modal>
+
+<style lang="scss">
+	main {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		height: 100%;
+		max-width: var(--game-width);
+		margin: auto;
+		position: relative;
+	}
+	.screen {
+		flex: 1;
+		min-height: 0;
+		width: 100%;
+		display: flex;
+		flex-direction: column;
+		overflow-y: auto;
+	}
+	.connection {
+		width: 100%;
+		text-align: center;
+		font-size: var(--fs-small);
+		font-weight: bold;
+		padding: 4px;
+		background: var(--red);
+		color: #fff;
+	}
+	.resuming {
+		margin: auto;
+		color: var(--fg-secondary);
+	}
+	.setting {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		padding: 16px 0;
+		border-bottom: 1px solid var(--border-primary);
+	}
+	.title {
+		font-size: var(--fs-medium);
+		font-weight: 500;
+	}
+	.desc {
+		font-size: var(--fs-tiny);
+		color: var(--fg-secondary);
+	}
+</style>

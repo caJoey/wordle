@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { createEventDispatcher } from "svelte";
+	import type { LetterState } from "../../../shared/protocol";
 	import { COLS } from "../../utils";
 
 	import Tile from "./Tile.svelte";
@@ -13,31 +13,12 @@
 	export function bounce() {
 		tiles.forEach((e) => e.bounce());
 	}
-	const dispatch = createEventDispatcher();
 	let animation = "";
 	let tiles: Tile[] = [];
-
-	const MAX_DOUBLE_CLICK_INTERVAL = 400;
-	let lastTouch = 0;
-	/**
-	 * Detect double clicks on mobile devices by detecting touches <= 500ms apart. This is needed
-	 * because listening to touch events on Board prevents Row from receiving dblclick events.
-	 */
-	function onTouch(e: TouchEvent) {
-		if (Date.now() - lastTouch <= MAX_DOUBLE_CLICK_INTERVAL) {
-			e.preventDefault();
-			dispatch("ctx", { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY });
-		} else {
-			lastTouch = Date.now();
-		}
-	}
 </script>
 
 <div
 	class="board-row"
-	on:contextmenu|preventDefault={(e) => dispatch("ctx", { x: e.clientX, y: e.clientY })}
-	on:dblclick|preventDefault={(e) => dispatch("ctx", { x: e.clientX, y: e.clientY })}
-	on:touchstart={onTouch}
 	on:animationend={() => (animation = "")}
 	data-animation={animation}
 	class:complete={guesses > num}

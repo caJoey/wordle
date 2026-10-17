@@ -1,14 +1,23 @@
 <script lang="ts">
 	import { createEventDispatcher } from "svelte";
+	import type { LetterState } from "../../../shared/protocol";
 
 	export let letter: string;
 	export let state: LetterState = "🔳";
+	export let label = letter;
 
 	const dispatch = createEventDispatcher();
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
-<div class={state} class:big={letter.length !== 1} on:click={() => dispatch("keystroke", letter)}>
+<div
+	class={state}
+	class:big={letter.length !== 1}
+	role="button"
+	aria-label={label}
+	tabindex="-1"
+	on:click={() => dispatch("keystroke", letter)}
+>
 	{letter}<slot />
 </div>
 
@@ -18,7 +27,7 @@
 		font-weight: bold;
 		text-transform: uppercase;
 		border-radius: 4px;
-		height: 58px;
+		height: min(58px, 7.5vh);
 		background: var(--key-bg);
 		cursor: pointer;
 		display: grid;

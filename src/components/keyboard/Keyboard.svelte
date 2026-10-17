@@ -1,11 +1,11 @@
 <script lang="ts">
-	import { createEventDispatcher, onDestroy } from "svelte/internal";
-	import { letterStates, mode } from "../../stores";
-	import { COLS, keys } from "../../utils";
+	import { createEventDispatcher, onMount } from "svelte";
+	import { COLS, isTypingTarget, keys, type LetterStates } from "../../utils";
 	import Key from "./Key.svelte";
 
 	export let value = "";
 	export let disabled = false;
+	export let letterStates: LetterStates;
 	let preventChange = true;
 
 	const dispatch = createEventDispatcher();
@@ -22,7 +22,7 @@
 		}
 	}
 	function handleKeystroke(e: KeyboardEvent) {
-		if (e.defaultPrevented) return;
+		if (e.defaultPrevented || isTypingTarget(e.target)) return;
 		if (!disabled && !e.ctrlKey && !e.altKey) {
 			if (e.key && /^[a-z]$/.test(e.key.toLowerCase())) {
 				return appendValue(e.key.toLowerCase());
@@ -34,12 +34,11 @@
 		if (e.key === "Escape") dispatch("esc");
 	}
 
-	// Ensure keys change on load instead of loading their state color & change the color of all the keys to neutral, then to their correct color on mode change
-	const unsub = mode.subscribe(() => {
-		preventChange = true;
-		setTimeout(() => (preventChange = false), 200);
+	// Ensure keys change color on load instead of loading in their state color
+	onMount(() => {
+		const id = setTimeout(() => (preventChange = false), 200);
+		return () => clearTimeout(id);
 	});
-	onDestroy(unsub);
 </script>
 
 <svelte:body on:keydown={handleKeystroke} />
@@ -50,7 +49,7 @@
 			<Key
 				{letter}
 				on:keystroke={(e) => appendValue(e.detail)}
-				state={$letterStates[letter]}
+				state={letterStates[letter]}
 			/>
 		{/each}
 	</div>
@@ -59,7 +58,7 @@
 			<Key
 				{letter}
 				on:keystroke={(e) => appendValue(e.detail)}
-				state={$letterStates[letter]}
+				state={letterStates[letter]}
 			/>
 		{/each}
 	</div>
@@ -69,10 +68,10 @@
 			<Key
 				{letter}
 				on:keystroke={(e) => appendValue(e.detail)}
-				state={$letterStates[letter]}
+				state={letterStates[letter]}
 			/>
 		{/each}
-		<Key letter="" on:keystroke={backspaceValue}>
+		<Key letter="" on:keystroke={backspaceValue} label="Backspace">
 			<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 				<path
 					d="M22 3H7c-.69 0-1.23.35-1.59.88L0 12l5.41 8.11c.36.53.9.89 1.59.89h15c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H7.07L2.4 12l4.66-7H22v14zm-11.59-2L14 13.41 17.59 17 19 15.59 15.41 12 19 8.41 17.59 7 14 10.59 10.41 7 9 8.41 12.59 12 9 15.59z"

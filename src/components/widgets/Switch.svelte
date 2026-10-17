@@ -4,10 +4,10 @@
 </script>
 
 <!-- svelte-ignore a11y-click-events-have-key-events -->
-<div on:click={(e) => !disabled && (value = !value)} class:checked={value} {disabled} />
+<div on:click={(e) => !disabled && (value = !value)} class:checked={value} data-disabled={disabled} />
 
 <style lang="scss">
-	div[disabled="true"] {
+	div[data-disabled="true"] {
 		opacity: 0.5;
 		cursor: unset;
 	}

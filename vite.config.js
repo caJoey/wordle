@@ -4,7 +4,13 @@ import { version } from "./package.json";
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  base: "/wordle/",
+  base: "/",
+  server: {
+    // The game server (npm run server) runs separately on port 3001
+    proxy: {
+      "/socket.io": { target: "http://localhost:3001", ws: true },
+    },
+  },
   plugins: [svelte({
     preprocess: vitePreprocess()
   })],

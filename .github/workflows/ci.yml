@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      # Tests inject a fake fetch; mock mode keeps anything else off the network.
+      GEMMA_MOCK: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install dependencies
+        run: npm install --no-audit --no-fund
+      - name: type check
+        run: npm run check
+      - name: test
+        run: npm test
+      - name: build
+        run: npm run build
