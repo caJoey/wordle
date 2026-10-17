@@ -1,59 +1,107 @@
-# Themed Multiplayer Wordle
+![Wordle+](https://raw.githubusercontent.com/MikhaD/wordle/main/public/img/og_1200x630.png)
+<div align="center">
+  <a href="https://mikhad.github.io/wordle/" ><img src="https://github.com/MikhaD/wordle/workflows/Publish/badge.svg?branch=main" alt="Publish workflow"/></a>
+  <img src="https://img.shields.io/github/package-json/v/MikhaD/wordle" alt="GitHub package.json version" />
+</div>
 
-A multiplayer take on [Wordle](https://www.nytimes.com/games/wordle/). Up to 4 players join a lobby with a code, someone picks a theme ("animals", "the ocean", "music"...), and Google's Gemma model picks answer words that fit it. Everyone gets the same secret word and races to solve it in 6 guesses. You see your opponents' colors live (but not their letters), and the fastest solver wins the round.
+---
+A recreation of the popular game [Wordle](https://www.nytimes.com/games/wordle/) by Josh Wardle (now purchased by the New York Times), with additional modes and features.
+Hosted on GitHub pages [here](https://mikhad.github.io/wordle/).
 
-## Setup
+# How to run:
 
-Requires Node 22.
-
+## Frontend
 ```sh
-npm i
-echo GEMMA_API=your-gemini-api-key > .env   # key from https://aistudio.google.com/apikey
+npm install
 npm run dev
 ```
 
-Then open the Vite URL it prints (http://localhost:5173). The game server runs on port 3001, and Vite proxies `/socket.io` to it.
-
-`.env` is gitignored. The key is only read by the server and never reaches the browser.
-
-### Mock mode (offline)
-
-If `GEMMA_API` is not set, or `GEMMA_MOCK=1` is, the server never calls the API. Themes return a fixed word pool after about 300 ms: hand-picked words for common topics (animals, food, sports, music, weather, space), and a theme-seeded selection from the answer list for anything else. This makes the game fully playable and testable offline. `GEMMA_MOCK=0` forces real mode.
-
-## Scripts
-
-| Script | What it does |
-| --- | --- |
-| `npm run dev` | Game server (`tsx watch`) and Vite dev server together |
-| `npm run server` | Game server only, with reload on change |
-| `npm run build` | Build the client into `dist/` |
-| `npm start` | Production: the server runs with `NODE_ENV=production` and serves `dist/` on `$PORT` (default 3001) |
-| `npm test` | Unit tests (`tests/` and `server/test/`) with Node's built-in test runner |
-| `npm run check` | `svelte-check` type checking |
-| `npm run eval` | Run sample themes through the word generator. Uses mock mode unless you pass `-- --real` (real calls count against your quota) |
-
-## Deploying
-
-Socket.IO needs a long-running Node process, so this can't be hosted on GitHub Pages. Any host that runs Docker will work (Render, Fly.io, Railway...):
-
+## Backend
 ```sh
-docker build -t themed-wordle .
-docker run -p 3001:3001 -e GEMMA_API=your-key themed-wordle
+cd server
+npm install
+cp .env.example .env
+npm run dev
 ```
 
-The image builds the client, then runs the server with `NODE_ENV=production`. It listens on `$PORT`, which most hosts set for you. Set `GEMMA_API` as a secret in the host's environment settings. Health checks can use `GET /healthz`. Lobbies are kept in memory, so run a single instance.
 
-The Gemini API free tier allows 16,000 input tokens per minute for Gemma, and each theme request sends about 2,900 tokens (the whole answer list). That's roughly 5 theme generations per minute, shared across all lobbies.
+# Additional Features
+- Words are chosen from the list of words at random instead of in sequence, and the solution is not stored in localStorage, making it harder to cheat. The seed for the random number is created from the date, ensuring that everyone gets the same random number, so people can still compare answers.
+- When you complete a game the definition of the word is shown on the end of game modal.
+- In addition to the other statistics, your average guesses and your losses are also displayed on the win modal.
+- When the timer reaches 0 for a given game mode it changes into a refresh button instead of just staying at 00:00:00.
+- When the timer reaches 0 for a given game mode a refresh button appears in the top left corner.
+- A tips widget in the settings menu with useful information about the functionality of the game.
+- Right clicking a submitted word on the board will tell you its definition.
+- Right clicking a submitted word on the board will tell you how many possible words could have been played there, taking all previous information into account.
+- Right clicking the row below the last submitted word will tell you how many possibilities there are taking all previous information into account.
+- The game mode is reflected in the url, allowing you to share a game mode directly.
+- You can share a link to a specific game number, allowing you to play historical games, and share specific rounds of the faster changing modes with your friends.
+- You can access previous games from the settings menu by inputting a game number or link.
+- Service worker which allows the game to be easily downloaded as a progressive web app and run offline.
+- Give Up button.
 
-CI (`.github/workflows/ci.yml`) runs install, check, test and build on pushes and PRs to `main`.
+## Additional modes
+The game mode can be changed by clicking WORDLE+ at the top of the screen or swiping the board in either direction.
 
-## Architecture
+**Hourly mode**: A new word every hour.
 
-- `shared/`: code used by both sides: the Socket.IO event contract (`protocol.ts`), guess scoring and validation (`wordle.ts`), and the word lists (2,315 answer words, 10,657 more valid guesses).
-- `server/`: Express + Socket.IO. It holds lobbies in memory, runs rounds and timers, and scores every guess on the server, so clients never see the answer before the round ends.
-- `server/words/gemma.ts`: sends the theme and the answer list to `gemma-4-26b-a4b-it` (thinking set to minimal, JSON output). It keeps only words from the answer list and drops answers already used in the lobby. If fewer than 5 words come back, it retries once with stricter wording, then asks the players for a broader theme.
-- `src/`: the Svelte client (lobby, theme picking, boards, results), built with Vite.
+**Infinite mode**: A new word every time you refresh, for the true addicts.
 
-## License
+# Technical details
+This is written with Svelte in Typescript. This is my first Svelte project, and is intended as an exercise to help me learn and become proficient in Svelte. It also uses some basic scss for styling.
 
-GPL-3.0. Forked from [MikhaD/wordle](https://github.com/MikhaD/wordle), the single-player Wordle+ by MikhaD. Many thanks to the original project. Forks must follow the same license.
+The project was initialized using `npm init vite@latest` and selecting the Svelte template.
+
+## Multiplayer scaffold
+
+The multiplayer UI is available from the **Multiplayer** button in the game. The frontend and
+Socket.IO server are intentionally started separately in two terminals:
+
+```sh
+npm install
+npm run dev
+```
+
+```sh
+cd server
+npm install
+cp .env.example .env
+npm run dev
+```
+
+The server listens on port 3001 by default and exposes `/health`. Set `VITE_MULTIPLAYER_SERVER_URL`
+in a root `.env` file if the frontend should connect to a different server URL. Configure
+`GEMMA_API_URL` and `GEMMA_API_KEY` in `server/.env` for model-backed theme words. The Gemma request
+is a placeholder integration point; without a key, the server uses a small local sample list.
+
+The current Wordle implementation uses six guesses (`ROWS = 6` in `src/utils.ts`); multiplayer
+uses the same limit. Round durations are five minutes, ten minutes, or unlimited.
+
+# Forking this project
+Anybody is welcome to fork this repository and do what they like with it, provided they follow the accompanying license (GPL-3.0).
+I would also appreciate if you could link back to this repository and credit me in your project.
+
+Have fun :)
+
+# Analytics
+This project contains basic google analytics which log the following information:
+- Number of visitors
+- Visitor's Country
+- Whether they arrived via a direct link or a search engine
+- Total number of people on site
+
+This information cannot be linked back to individual users. It is for my own personal use and is not shared with anyone else. This is my first "major" public facing project and being able to see how many people are playing from all over the world is a big factor in my motivation to continue working on it.
+
+<details>
+<summary>How to create a new mode</summary>
+
+- Add the mode name to the **end** of the GameMode enum in `enums.ts`
+- Add a case for that mode in the newSeed function in `utils.ts`
+- Add a ModeData object to the modeData modes array in `utils.ts`
+</details>
+                        
+## Stargazers over time
+[![Stargazers over time](https://starchart.cc/MikhaD/wordle.svg?variant=adaptive)](https://starchart.cc/MikhaD/wordle)
+
+                    

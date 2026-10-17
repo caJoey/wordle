@@ -15,6 +15,9 @@
     "test": "node --import tsx --test \"tests/*.test.ts\" \"server/test/*.test.ts\"",
     "eval": "tsx scripts/eval-themes.ts"
   },
+  "dependencies": {
+    "socket.io-client": "^4.8.1"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/MikhaD/wordle.git"

@@ -1,16 +1,4 @@
 {
-	"compilerOptions": {
-		"target": "ES2022",
-		"module": "ESNext",
-		"moduleResolution": "node",
-		"lib": ["ES2022"],
-		"types": ["node"],
-		"strict": true,
-		"noEmit": true,
-		"esModuleInterop": true,
-		"skipLibCheck": true,
-		"isolatedModules": true,
-		"forceConsistentCasingInFileNames": true
-	},
-	"include": ["./**/*.ts", "../shared/**/*.ts"]
+  "compilerOptions": { "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext", "strict": true, "esModuleInterop": true, "skipLibCheck": true, "outDir": "dist" },
+  "include": ["src/**/*.ts", "../shared/**/*.ts"]
 }
