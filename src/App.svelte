@@ -36,7 +36,7 @@
 </script>
 
 <!-- Browsers only allow sound after a gesture, so wake the crowd on the first one -->
-<svelte:window on:pointerdown={unlock} on:keydown={unlock} />
+<svelte:window on:pointerdown={unlock} on:click={unlock} on:touchend={unlock} on:keydown={unlock} />
 
 <Toaster bind:this={toaster} />
 
@@ -96,8 +96,8 @@
 	</div>
 	<div class="setting">
 		<div>
-			<div class="title">Crowd Noise</div>
-			<div class="desc">Roars, gasps and an air horn</div>
+			<div class="title">Soundtrack</div>
+			<div class="desc">Speeds up as your crowd meter rises</div>
 		</div>
 		<Switch bind:value={$settings.crowdSound} disabled={!$settings.stadium} />
 	</div>

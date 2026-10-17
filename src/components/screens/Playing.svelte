@@ -96,7 +96,8 @@
 		// Keep your meter where it was until your row has flipped
 		if (Date.now() < holdMineUntil && $snapshot.youId in hype) next[$snapshot.youId] = hype[$snapshot.youId];
 		hype = next;
-		crowd.setHype(Math.max(0, ...Object.values(hype)));
+		// The soundtrack follows your meter, or the hottest player's while you spectate
+		crowd.setHype(hype[$snapshot.youId] ?? Math.max(0, ...Object.values(hype)));
 	}
 
 	function cheer(e: StadiumEvent) {
@@ -104,26 +105,11 @@
 		if (!stadium || !seat) return;
 		const isYou = e.playerId === $snapshot.youId;
 		booth?.say(commentary(e, seat.p.name, isYou), e.type);
-		switch (e.type) {
-			case "solve":
-				crowd.roar(isYou || e.first);
-				confetti?.fire(isYou ? 180 : 60, [seatColor(seat.index), "#ffd23f", "#ffffff", "#ff2d55", "#23c4ff"]);
-				if (isYou) {
-					crowd.airHorn();
-					flash = true;
-					later(700, () => (flash = false));
-				}
-				break;
-			case "cook":
-			case "lead":
-				crowd.ooh();
-				break;
-			case "gasp":
-				crowd.gasp();
-				break;
-			case "fail":
-				crowd.aww();
-				break;
+		if (e.type !== "solve") return;
+		confetti?.fire(isYou ? 180 : 60, [seatColor(seat.index), "#ffd23f", "#ffffff", "#ff2d55", "#23c4ff"]);
+		if (isYou) {
+			flash = true;
+			later(700, () => (flash = false));
 		}
 	}
 
