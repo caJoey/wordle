@@ -71,7 +71,8 @@ export const GENERATOR_UNAVAILABLE = "Theme generator unavailable, using a rando
 
 export type GeneratePool = (theme: string, exclude?: string[]) => Promise<string[]>;
 
-export type BotTurn = { theme?: string; history: { word: string; colors: LetterState[]; }[]; candidates: string[]; };
+/** What a bot is told: its own (difficulty-filtered) clues, and the theme on hard. Never a word list. */
+export type BotTurn = { theme?: string; history: { word: string; colors: LetterState[]; }[]; };
 /** Choose a bot's next guess. Undefined or a rejection means "play a random candidate". */
 export type BotGuess = (turn: BotTurn) => Promise<string | undefined>;
 
@@ -808,9 +809,9 @@ export class LobbyManager {
 	}
 
 	/**
-	 * One bot guess. The bot only ever sees its own clues, cut down by difficulty (BOT_SKILL):
-	 * candidates are the answer words that fit what it may use, and Gemma picks one (using the theme
-	 * on hard). Gemma's pick must be a candidate; anything else falls back to a random candidate.
+	 * One bot guess. Gemma only sees the bot's own clues, cut down by difficulty (BOT_SKILL), plus the
+	 * theme on hard, and has to come up with a word itself. Any real word it hasn't played is accepted,
+	 * even one that breaks its clues. Only if Gemma fails do we play a random word that fits them.
 	 */
 	private async botTurn(l: Lobby, bot: Player) {
 		const roundId = l.roundId;
@@ -821,12 +822,11 @@ export class LobbyManager {
 			word,
 			colors: skill.clues === "all" ? bot.colors[i] : bot.colors[i].map((c): LetterState => (c === "⬛" ? "🔳" : c)),
 		}));
-		const candidates = candidatesFor(history, skill.clues);
 		let word: string | undefined;
 		let timer: unknown;
 		try {
 			word = await Promise.race([
-				Promise.resolve().then(() => this.botGuess({ theme: skill.theme ? l.theme : undefined, history, candidates })),
+				Promise.resolve().then(() => this.botGuess({ theme: skill.theme ? l.theme : undefined, history })),
 				new Promise<undefined>((resolve) => (timer = this.sched.setTimeout(() => resolve(undefined), this.t.botTimeoutMs))),
 			]);
 		} catch (err) {
@@ -834,7 +834,8 @@ export class LobbyManager {
 		}
 		this.clearTimer(timer);
 		if (stale()) return;
-		if (!word || !candidates.includes(word)) {
+		if (!word || !isValidGuess(word) || bot.words.includes(word)) {
+			const candidates = candidatesFor(history, skill.clues);
 			word = candidates.length ? candidates[Math.floor(this.random() * candidates.length)] : undefined;
 		}
 		if (!word) return;

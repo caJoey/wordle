@@ -115,7 +115,7 @@ describe("bots", () => {
 			await t.runBots(30_000);
 			assert.ok(turns.length >= 2);
 			for (const turn of turns) {
-				assert.ok(!("answer" in turn));
+				assert.deepEqual(Object.keys(turn).sort(), ["history", "theme"], "no answer, no word list");
 				assert.equal(turn.theme, difficulty === "hard" ? "birds" : undefined);
 				for (const h of turn.history) {
 					if (difficulty === "easy") assert.ok(!h.colors.includes("⬛"), "easy forgets grays");
@@ -125,7 +125,7 @@ describe("bots", () => {
 		});
 	}
 
-	it("uses Gemma's pick when it is a candidate", async () => {
+	it("uses Gemma's pick when it is a real word", async () => {
 		const t = setup({ botGuess: async () => "crane" });
 		t.addBot("hard");
 		await t.toPlaying();
@@ -134,7 +134,7 @@ describe("bots", () => {
 		assert.ok(t.bots()[0].solved);
 	});
 
-	it("falls back to a candidate when Gemma fails, times out, returns junk or a non-candidate", async () => {
+	it("falls back to a fitting word when Gemma fails, times out, returns junk or repeats itself", async () => {
 		for (const botGuess of [
 			async () => { throw new Error("429"); },
 			() => new Promise<string>(() => {}),
@@ -146,13 +146,15 @@ describe("bots", () => {
 			await t.runBots(10_000);
 			assert.ok(t.bots()[0].words.length >= 1);
 		}
-		// A real word that contradicts the bot's clues is not accepted
-		let n = 0;
-		const t = setup({ botGuess: async () => (n++ === 0 ? "slate" : "slate") });
+		// Gemma may break its own clues (a human mistake), but a repeated guess is replaced
+		const t = setup({ botGuess: async () => "slate" });
 		t.addBot("medium");
 		await t.toPlaying();
 		await t.runBots(20_000);
-		assert.equal(t.bots()[0].words.filter((w) => w === "slate").length, 1);
+		const words = t.bots()[0].words;
+		assert.equal(words[0], "slate");
+		assert.equal(words.filter((w) => w === "slate").length, 1);
+		assert.ok(words.length >= 2);
 	});
 
 	it("bots don't hold up the round or the ready check", async () => {
