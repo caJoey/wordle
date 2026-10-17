@@ -8,7 +8,7 @@
 }
 
 :root {
-	font-family: Arial, sans-serif;
+	font-family: "TikTok Sans", Arial, sans-serif;
 	background: var(--bg-primary);
 	color: var(--fg-primary);
 	font-size: var(--fs-regular);

@@ -18,7 +18,7 @@ Then open the Vite URL it prints (http://localhost:5173). The game server runs o
 
 ### Mock mode (offline)
 
-If `GEMMA_API` is not set, or `GEMMA_MOCK=1` is, the server never calls the API. Themes return a fixed word pool after about 300 ms: hand-picked words for common topics (animals, food, sports, music, weather, space), and a theme-seeded selection from the answer list for anything else. This makes the game fully playable and testable offline. `GEMMA_MOCK=0` forces real mode.
+If `GEMMA_API` is not set, or `GEMMA_MOCK=1` is, the server never calls the API. Themes return a fixed word pool after about 300 ms: hand-picked words for common topics (animals, food, sports, music, weather, space), and a theme-seeded selection from the eligible answer pool for anything else. This makes the game fully playable and testable offline. `GEMMA_MOCK=0` forces real mode.
 
 ## Scripts
 
@@ -43,15 +43,15 @@ docker run -p 3001:3001 -e GEMMA_API=your-key themed-wordle
 
 The image builds the client, then runs the server with `NODE_ENV=production`. It listens on `$PORT`, which most hosts set for you. Set `GEMMA_API` as a secret in the host's environment settings. Health checks can use `GET /healthz`. Lobbies are kept in memory, so run a single instance.
 
-The Gemini API free tier allows 16,000 input tokens per minute for Gemma, and each theme request sends about 2,900 tokens (the whole answer list). That's roughly 5 theme generations per minute, shared across all lobbies.
+The theme request sends the theme and asks Gemma for 20 five-letter candidates. The bundled word lists stay on the server and are used to filter the response.
 
 CI (`.github/workflows/ci.yml`) runs install, check, test and build on pushes and PRs to `main`.
 
 ## Architecture
 
-- `shared/`: code used by both sides: the Socket.IO event contract (`protocol.ts`), guess scoring and validation (`wordle.ts`), and the word lists (2,315 answer words, 10,657 more valid guesses).
+- `shared/`: code used by both sides: the Socket.IO event contract (`protocol.ts`), guess scoring and validation (`wordle.ts`), and the word lists (2,315 original answer words plus 10,657 additional valid guesses; both lists are eligible multiplayer answers).
 - `server/`: Express + Socket.IO. It holds lobbies in memory, runs rounds and timers, and scores every guess on the server, so clients never see the answer before the round ends.
-- `server/words/gemma.ts`: sends the theme and the answer list to `gemma-4-26b-a4b-it` (thinking set to minimal, JSON output). It keeps only words from the answer list and drops answers already used in the lobby. If fewer than 5 words come back, it retries once with stricter wording, then asks the players for a broader theme.
+- `server/words/gemma.ts`: sends only the theme to `gemma-4-26b-a4b-it` (thinking set to minimal, JSON output) and asks for 20 five-letter candidates. It keeps only unique words found in either bundled list and drops answers already used in the lobby. If fewer than 5 words remain, it retries with broader wording, then asks the players for a broader theme.
 - `src/`: the Svelte client (lobby, theme picking, boards, results), built with Vite.
 
 ## License

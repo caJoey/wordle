@@ -2317,7 +2317,7 @@ const words = {
 		"rural",
 		"shave"
 	],
-	// Words that are valid guesses, but could not be the final answer
+	// Additional valid guesses, now also eligible to be selected as multiplayer answers
 	"valid": [
 		"aahed",
 		"aalii",

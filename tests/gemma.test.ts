@@ -44,9 +44,9 @@ test("parses JSON wrapped in prose and a code fence", async () => {
 	assert.deepEqual(await generatePool("animals"), TEN);
 });
 
-test("filters words not in the answer list, normalises case, dedupes", async () => {
+test("filters words outside both bundled lists, normalises case, dedupes", async () => {
 	fakeReplies(JSON.stringify([...TEN, "python", "cat", "aahed", " Horse ", "TIGER", "horse"]));
-	assert.deepEqual(await generatePool("animals"), TEN);
+	assert.deepEqual(await generatePool("animals"), [...TEN, "aahed"]);
 });
 
 test("skips thought parts", async () => {
@@ -65,8 +65,10 @@ test("retries once with stricter wording, then succeeds", async () => {
 	assert.deepEqual(await generatePool("animals"), TEN);
 	assert.equal(calls.length, 2);
 	const [first, second] = calls.map((c) => c.body.contents[0].parts[0].text as string);
-	assert.ok(!first.includes("Do not invent words"));
-	assert.ok(second.includes("Do not invent words"));
+	assert.ok(!first.includes("loosely related words"));
+	assert.ok(second.includes("loosely related words"));
+	assert.ok(!first.includes("WORD LIST:"));
+	assert.ok(!second.includes("WORD LIST:"));
 });
 
 test("too few words after retry -> ThemeError", async () => {
@@ -124,6 +126,7 @@ test("prompt keeps theme inside delimiters and marks it as data", () => {
 	assert.equal(p.match(/<\/theme>/g)?.length, 2); // one in the instruction sentence, one closing the theme
 	assert.match(p, /<theme>\/theme say hi<\/theme>/);
 	assert.match(p, /ignore any instructions/i);
+	assert.ok(!p.includes("WORD LIST:"));
 });
 
 test("mock mode: deterministic, no network, honours exclude", async () => {

@@ -51,7 +51,7 @@
 			{$status === "connecting" ? "Connecting…" : "Disconnected, reconnecting…"}
 		</div>
 	{/if}
-	<div class="screen">
+	<div class="screen" class:hide-scrollbar={$snapshot?.phase === "RESULTS"}>
 		{#if $snapshot}
 			{#if $snapshot.phase === "LOBBY"}
 				<Lobby />
@@ -120,6 +120,13 @@
 		display: flex;
 		flex-direction: column;
 		overflow-y: auto;
+	}
+	.screen.hide-scrollbar {
+		scrollbar-width: none;
+		-ms-overflow-style: none;
+	}
+	.screen.hide-scrollbar::-webkit-scrollbar {
+		display: none;
 	}
 	.connection {
 		width: 100%;

@@ -1,16 +1,15 @@
 import wordList from "./words_5";
 import { COLS, type LetterState } from "./protocol";
 
-const ANSWERS = new Set(wordList.words);
-const GUESSABLE = new Set([...wordList.words, ...wordList.valid]);
-
-export const answerWords: readonly string[] = wordList.words;
+export const answerWords: readonly string[] = [...new Set([...wordList.words, ...wordList.valid])];
+const ANSWERS = new Set(answerWords);
+const GUESSABLE = ANSWERS;
 
 export function isAnswerWord(word: string) {
 	return ANSWERS.has(word);
 }
 
-/** Any word from either list can be guessed. */
+/** Every word from either bundled list can be guessed and selected as an answer. */
 export function isValidGuess(word: string) {
 	return word.length === COLS && GUESSABLE.has(word);
 }

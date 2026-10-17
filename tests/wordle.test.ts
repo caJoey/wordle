@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { evaluateGuess, isValidGuess, isAnswerWord, answerWords } from "../shared/wordle";
+import wordList from "../shared/words_5";
 
 const ev = (guess: string, answer: string) => evaluateGuess(guess, answer).join("");
 
@@ -48,7 +49,7 @@ test("isValidGuess rejects wrong length and unknown words", () => {
 });
 
 test("isAnswerWord / answerWords", () => {
-	assert.equal(answerWords.length, 2315);
+	assert.equal(answerWords.length, new Set([...wordList.words, ...wordList.valid]).size);
 	assert.equal(isAnswerWord("crane"), true);
-	assert.equal(isAnswerWord("aahed"), false);
+	assert.equal(isAnswerWord("aahed"), true);
 });
