@@ -16,6 +16,9 @@ export const PRAISE = [
 	"Phew",
 ];
 
+/** Each lobby seat's color, for avatars and stadium meters. */
+export const SEAT_COLORS = ["#538d4e", "#b59f3b", "#4a7fc1", "#b0508f"];
+
 export type GameBoard = {
 	words: string[],
 	state: LetterState[][],

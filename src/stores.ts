@@ -3,15 +3,20 @@ import { readable, writable } from "svelte/store";
 export type Settings = {
 	dark: boolean;
 	colorblind: boolean;
+	/** Crowd meters, commentary and confetti while playing. */
+	stadium: boolean;
+	crowdSound: boolean;
 };
 
 function loadSettings(): Settings {
-	const defaults: Settings = { dark: true, colorblind: false };
+	const defaults: Settings = { dark: true, colorblind: false, stadium: true, crowdSound: true };
 	try {
 		const parsed = JSON.parse(localStorage.getItem("settings") || "{}");
 		return {
 			dark: typeof parsed.dark === "boolean" ? parsed.dark : defaults.dark,
 			colorblind: typeof parsed.colorblind === "boolean" ? parsed.colorblind : defaults.colorblind,
+			stadium: typeof parsed.stadium === "boolean" ? parsed.stadium : defaults.stadium,
+			crowdSound: typeof parsed.crowdSound === "boolean" ? parsed.crowdSound : defaults.crowdSound,
 		};
 	} catch {
 		return defaults;

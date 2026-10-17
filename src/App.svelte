@@ -11,6 +11,7 @@
 	import Results from "./components/screens/Results.svelte";
 	import { leaveLobby, messages, session, snapshot, status } from "./socket";
 	import { settings } from "./stores";
+	import { unlock } from "./crowd";
 
 	document.title = "Wordle+ Party | Themed multiplayer Wordle";
 
@@ -33,6 +34,9 @@
 	// A session exists but its snapshot hasn't arrived yet (reloading or reconnecting)
 	$: resuming = !!$session && !$snapshot;
 </script>
+
+<!-- Browsers only allow sound after a gesture, so wake the crowd on the first one -->
+<svelte:window on:pointerdown={unlock} on:click={unlock} on:touchend={unlock} on:keydown={unlock} />
 
 <Toaster bind:this={toaster} />
 
@@ -82,6 +86,20 @@
 			<div class="desc">High contrast colors</div>
 		</div>
 		<Switch bind:value={$settings.colorblind} />
+	</div>
+	<div class="setting">
+		<div>
+			<div class="title">🏟️ Stadium Mode</div>
+			<div class="desc">Crowd meters, commentary and confetti</div>
+		</div>
+		<Switch bind:value={$settings.stadium} />
+	</div>
+	<div class="setting">
+		<div>
+			<div class="title">Soundtrack</div>
+			<div class="desc">Speeds up as your crowd meter rises</div>
+		</div>
+		<Switch bind:value={$settings.crowdSound} disabled={!$settings.stadium} />
 	</div>
 </Modal>
 

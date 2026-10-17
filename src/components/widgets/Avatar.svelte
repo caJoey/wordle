@@ -1,17 +1,17 @@
 <script lang="ts">
+	import { SEAT_COLORS } from "../../utils";
+
 	export let name: string;
 	/** Seat in the lobby, picks the color. */
 	export let index = 0;
 	export let size = 32;
 	export let dim = false;
-
-	const COLORS = ["#538d4e", "#b59f3b", "#4a7fc1", "#b0508f"];
 </script>
 
 <div
 	class="avatar"
 	class:dim
-	style="--size: {size}px; background: {COLORS[index % COLORS.length]}"
+	style="--size: {size}px; background: {SEAT_COLORS[index % SEAT_COLORS.length]}"
 	title={name}
 >
 	{name.trim().charAt(0).toUpperCase() || "?"}
