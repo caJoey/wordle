@@ -7,7 +7,10 @@
 
 	type Row = RankEntry & { player: PlayerView; index: number; };
 
+	/** Boards shown before "show all"; with 50 players the full grid is a long scroll. */
+	const BOARDS_SHOWN = 12;
 	let sending = false;
+	let allBoards = false;
 
 	$: results = $snapshot.results;
 	$: answer = results?.answer ?? "";
@@ -19,7 +22,9 @@
 		.filter((r): r is Row => !!r.player);
 	// Podium order: 2nd, 1st, 3rd
 	$: podium = [rows[1], rows[0], rows[2]].filter(Boolean);
-	$: active = $snapshot.players.filter((p) => p.connected && !p.spectating);
+	// Bots are always ready, so only humans count toward the next round
+	$: active = $snapshot.players.filter((p) => p.connected && !p.spectating && !p.bot);
+	$: waitingOn = active.filter((p) => !p.ready);
 	$: readyCount = active.filter((p) => p.ready).length;
 
 	function outcome(r: RankEntry) {
@@ -52,7 +57,7 @@
 		<section class="podium">
 			{#each podium as r (r.playerId)}
 				<div class="step place-{Math.min(r.place, 3)}" class:unsolved={!r.solved}>
-					<Avatar name={r.player.name} index={r.index} size={r.place === 1 ? 44 : 34} />
+					<Avatar name={r.player.name} index={r.index} size={r.place === 1 ? 44 : 34} bot={r.player.bot} />
 					<div class="pname">{r.player.name}</div>
 					<div class="block">
 						<div class="pos">{r.place === 1 && r.solved ? "👑" : ordinal(r.place)}</div>
@@ -68,7 +73,7 @@
 			{#each rows as r (r.playerId)}
 				<li class:you={r.playerId === $snapshot.youId}>
 					<span class="place">{ordinal(r.place)}</span>
-					<Avatar name={r.player.name} index={r.index} size={24} dim={!r.player.connected} />
+					<Avatar name={r.player.name} index={r.index} size={24} dim={!r.player.connected} bot={r.player.bot} />
 					<span class="name">{r.player.name}</span>
 					<span class="outcome" class:solved={r.solved}>{outcome(r)}</span>
 					<span class="wins" title="Round wins">🏆 {r.player.wins}</span>
@@ -78,18 +83,21 @@
 	</section>
 
 	<section class="boards">
-		{#each rows as r (r.playerId)}
+		{#each allBoards ? rows : rows.slice(0, BOARDS_SHOWN) as r (r.playerId)}
 			<div class="board">
 				<div class="bname">{r.player.name}</div>
 				<MiniBoard colors={r.player.colors} words={r.player.words ?? []} size={22} />
 			</div>
 		{/each}
+		{#if !allBoards && rows.length > BOARDS_SHOWN}
+			<button class="more" on:click={() => (allBoards = true)}>Show all {rows.length} boards</button>
+		{/if}
 	</section>
 
 	<section class="ready">
 		<div class="who">
 			{#each $snapshot.players as p, i (p.id)}
-				{#if !p.spectating}
+				{#if !p.spectating && !p.bot && (active.length <= 12 || waitingOn.includes(p))}
 					<div class="chip" class:on={p.ready} class:offline={!p.connected}>
 						<Avatar name={p.name} index={i} size={20} dim={!p.connected} />
 						{p.name}
@@ -273,6 +281,16 @@
 		justify-content: center;
 		gap: 16px;
 	}
+	.more {
+		width: 100%;
+		padding: 8px;
+		border: 1px solid var(--border-primary);
+		border-radius: 6px;
+		background: none;
+		color: var(--fg-primary);
+		font: inherit;
+		cursor: pointer;
+	}
 	.board {
 		display: flex;
 		flex-direction: column;
@@ -293,6 +311,8 @@
 		}
 	}
 	.who {
+		max-height: 30vh;
+		overflow-y: auto;
 		display: flex;
 		flex-wrap: wrap;
 		gap: 6px;

@@ -69,7 +69,7 @@ WORD LIST:
 ${wordList.words.join(" ")}`;
 }
 
-async function askGemma(prompt: string): Promise<string> {
+export async function askGemma(prompt: string, config: { maxOutputTokens?: number; temperature?: number; } = {}): Promise<string> {
 	const key = process.env.GEMMA_API ?? "";
 	const model = process.env.GEMMA_MODEL || DEFAULT_MODEL;
 	const doFetch = fetchImpl ?? fetch;
@@ -84,8 +84,8 @@ async function askGemma(prompt: string): Promise<string> {
 				thinkingConfig: { thinkingLevel: "minimal" },
 				// JSON mode stops the model rambling after the array (halves output tokens); 20 words is ~115 tokens.
 				responseMimeType: "application/json",
-				maxOutputTokens: 220,
-				temperature: 0.7,
+				maxOutputTokens: config.maxOutputTokens ?? 220,
+				temperature: config.temperature ?? 0.7,
 			},
 		}),
 	});

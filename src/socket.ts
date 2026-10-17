@@ -2,6 +2,7 @@ import { io, type Socket } from "socket.io-client";
 import { derived, get, writable } from "svelte/store";
 import type {
 	Ack,
+	BotDifficulty,
 	ClientToServerEvents,
 	LetterState,
 	LobbySnapshot,
@@ -160,6 +161,18 @@ export function submitTheme(theme: string) {
 
 export function submitGuess(word: string) {
 	return call<{ colors: LetterState[]; }>((s) => s.emitWithAck("guess:submit", { word }));
+}
+
+export function addBot(difficulty: BotDifficulty) {
+	return call((s) => s.emitWithAck("bot:add", { difficulty }));
+}
+
+export function setBotDifficulty(playerId: string, difficulty: BotDifficulty) {
+	return call((s) => s.emitWithAck("bot:difficulty", { playerId, difficulty }));
+}
+
+export function removeBot(playerId: string) {
+	return call((s) => s.emitWithAck("bot:remove", { playerId }));
 }
 
 export function setReady(ready: boolean) {

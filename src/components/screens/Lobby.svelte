@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { MAX_PLAYERS } from "../../../shared/protocol";
-	import { me, setRoundSeconds, snapshot, startGame, toast } from "../../socket";
+	import { MAX_BOTS, MAX_PLAYERS } from "../../../shared/protocol";
+	import { addBot, me, removeBot, setBotDifficulty, setRoundSeconds, snapshot, startGame, toast } from "../../socket";
 	import { copyText, formatClock } from "../../utils";
 	import { PlayerList } from "../widgets";
 
@@ -15,6 +15,13 @@
 	$: if (!dragging) seconds = $snapshot.roundSeconds;
 	$: isHost = !!$me?.isHost;
 	$: host = $snapshot.players.find((p) => p.isHost);
+	$: botCount = $snapshot.players.filter((p) => p.bot).length;
+	$: canAddBot = botCount < MAX_BOTS && $snapshot.players.length < MAX_PLAYERS;
+
+	async function botAction(action: Promise<{ ok: true } | { ok: false; error: string }>) {
+		const res = await action;
+		if ("error" in res) toast(res.error, 3);
+	}
 
 	async function copyLink() {
 		const url = `${location.origin}${location.pathname}?code=${$snapshot.code}`;
@@ -53,8 +60,21 @@
 	</section>
 
 	<section>
-		<div class="label">Players {$snapshot.players.length}/{MAX_PLAYERS}</div>
-		<PlayerList players={$snapshot.players} youId={$snapshot.youId} />
+		<div class="label row">
+			<span>Players {$snapshot.players.length}/{MAX_PLAYERS}</span>
+			{#if isHost}
+				<button class="add-bot" disabled={!canAddBot} on:click={() => botAction(addBot("medium"))}>
+					🤖 Add Gemma bot ({botCount}/{MAX_BOTS})
+				</button>
+			{/if}
+		</div>
+		<PlayerList
+			players={$snapshot.players}
+			youId={$snapshot.youId}
+			canRemoveBots={isHost}
+			on:removeBot={(e) => botAction(removeBot(e.detail))}
+			on:botDifficulty={(e) => botAction(setBotDifficulty(e.detail.playerId, e.detail.difficulty))}
+		/>
 	</section>
 
 	<section>
@@ -141,6 +161,29 @@
 			font-weight: bold;
 			min-width: 3em;
 			text-align: right;
+		}
+	}
+	.row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 8px;
+	}
+	.add-bot {
+		padding: 4px 10px;
+		border: 1px solid var(--border-primary);
+		border-radius: 20px;
+		background: none;
+		color: var(--fg-primary);
+		font: inherit;
+		font-size: var(--fs-tiny);
+		text-transform: none;
+		letter-spacing: normal;
+		cursor: pointer;
+		white-space: nowrap;
+		&:disabled {
+			opacity: 0.5;
+			cursor: default;
 		}
 	}
 	.value {

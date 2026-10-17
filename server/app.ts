@@ -5,12 +5,17 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Server, type Socket } from "socket.io";
 import type { Ack, ClientToServerEvents, ServerToClientEvents } from "../shared/protocol";
-import { LobbyManager, type GeneratePool, type Scheduler, type Timings } from "./lobby";
+import { LobbyManager, type BotGuess, type GeneratePool, type Scheduler, type Timings } from "./lobby";
 
 /** Loaded on first use so the Gemma client is only required when no stub is injected. */
 const gemmaGeneratePool: GeneratePool = async (theme, exclude) => {
 	const { generatePool } = await import("./words/gemma");
 	return (generatePool as GeneratePool)(theme, exclude);
+};
+
+const gemmaBotGuess: BotGuess = async (turn) => {
+	const { botGuess } = await import("./words/bot");
+	return botGuess(turn);
 };
 
 type SocketData = { code?: string; playerId?: string; };
@@ -19,7 +24,10 @@ type GameSocket = Socket<ClientToServerEvents, ServerToClientEvents, {}, SocketD
 
 export interface CreateServerOptions {
 	generatePool?: GeneratePool;
+	botGuess?: BotGuess;
 	timings?: Partial<Timings>;
+	/** See LobbyManagerOptions.publishDelayMs. Default 0 (tests); index.ts batches. */
+	publishDelayMs?: number;
 	scheduler?: Scheduler;
 	random?: () => number;
 	/** Serve the built client from `distDir` with SPA fallback. Default: NODE_ENV === "production". */
@@ -44,7 +52,11 @@ export function createServer(opts: CreateServerOptions = {}): GameServer {
 	const production = process.env.NODE_ENV === "production";
 	const app = express();
 	const httpServer = createHttpServer(app);
-	const io: GameIO = new Server(httpServer, production ? {} : { cors: { origin: true } });
+	// Snapshots are mostly repeated emoji and keys, so compression shrinks them several times over
+	const io: GameIO = new Server(httpServer, {
+		perMessageDeflate: { threshold: 1024 },
+		...(production ? {} : { cors: { origin: true } }),
+	});
 
 	/** playerId -> the socket currently bound to that player. */
 	const sockets = new Map<string, GameSocket>();
@@ -57,6 +69,8 @@ export function createServer(opts: CreateServerOptions = {}): GameServer {
 
 	const manager = new LobbyManager({
 		generatePool: opts.generatePool ?? gemmaGeneratePool,
+		botGuess: opts.botGuess ?? gemmaBotGuess,
+		publishDelayMs: opts.publishDelayMs,
 		timings: opts.timings,
 		scheduler: opts.scheduler,
 		random: opts.random,
@@ -161,6 +175,11 @@ export function createServer(opts: CreateServerOptions = {}): GameServer {
 			handle(ack, inLobby((code, id) => manager.submitTheme(code, id, data?.theme))));
 		socket.on("guess:submit", (data, ack) =>
 			handle(ack, inLobby((code, id) => manager.guess(code, id, data?.word))));
+		socket.on("bot:add", (data, ack) => handle(ack, inLobby((code, id) => manager.addBot(code, id, data?.difficulty))));
+		socket.on("bot:difficulty", (data, ack) =>
+			handle(ack, inLobby((code, id) => manager.setBotDifficulty(code, id, data?.playerId, data?.difficulty))));
+		socket.on("bot:remove", (data, ack) =>
+			handle(ack, inLobby((code, id) => manager.removeBot(code, id, data?.playerId))));
 		socket.on("player:ready", (data, ack) =>
 			handle(ack, inLobby((code, id) => manager.ready(code, id, data?.ready))));
 

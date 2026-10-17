@@ -7,7 +7,8 @@ try {
 }
 
 const PORT = Number(process.env.PORT) || 3001;
-const server = createServer();
+// Batch bursts of guesses into one broadcast; with 50 players each broadcast is 50 snapshots
+const server = createServer({ publishDelayMs: 150 });
 server.listen(PORT).then((port) => {
 	console.log(`Game server listening on http://localhost:${port}${process.env.NODE_ENV === "production" ? " (serving dist/)" : ""}`);
 });
