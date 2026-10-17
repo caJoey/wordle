@@ -14,6 +14,7 @@
 	import { GameMode } from "./enums";
 	import { Toaster } from "./components/widgets";
 	import { setContext } from "svelte";
+	import MultiplayerLobby from "./components/multiplayer/MultiplayerLobby.svelte";
 
 	document.title = "Wordle+ | An infinite word guessing game";
 </script>
@@ -26,6 +27,7 @@
 	let word: string;
 	let state: GameState;
 	let toaster: Toaster;
+	let multiplayerOpen = false;
 
 	settings.set(new Settings(localStorage.getItem("settings")));
 	settings.subscribe((s) => localStorage.setItem("settings", JSON.stringify(s)));
@@ -66,6 +68,10 @@
 </script>
 
 <Toaster bind:this={toaster} />
+<button class="multiplayer-launch" on:click={() => (multiplayerOpen = true)}>Multiplayer</button>
+{#if multiplayerOpen}
+	<MultiplayerLobby on:close={() => (multiplayerOpen = false)} />
+{/if}
 {#if toaster}
 	<Game {stats} bind:word {toaster} bind:game={state} />
 {/if}

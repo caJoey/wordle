@@ -8,6 +8,23 @@
 A recreation of the popular game [Wordle](https://www.nytimes.com/games/wordle/) by Josh Wardle (now purchased by the New York Times), with additional modes and features.
 Hosted on GitHub pages [here](https://mikhad.github.io/wordle/).
 
+# How to run:
+
+## Frontend
+```sh
+npm install
+npm run dev
+```
+
+## Backend
+```sh
+cd server
+npm install
+cp .env.example .env
+npm run dev
+```
+
+
 # Additional Features
 - Words are chosen from the list of words at random instead of in sequence, and the solution is not stored in localStorage, making it harder to cheat. The seed for the random number is created from the date, ensuring that everyone gets the same random number, so people can still compare answers.
 - When you complete a game the definition of the word is shown on the end of game modal.
@@ -35,6 +52,31 @@ The game mode can be changed by clicking WORDLE+ at the top of the screen or swi
 This is written with Svelte in Typescript. This is my first Svelte project, and is intended as an exercise to help me learn and become proficient in Svelte. It also uses some basic scss for styling.
 
 The project was initialized using `npm init vite@latest` and selecting the Svelte template.
+
+## Multiplayer scaffold
+
+The multiplayer UI is available from the **Multiplayer** button in the game. The frontend and
+Socket.IO server are intentionally started separately in two terminals:
+
+```sh
+npm install
+npm run dev
+```
+
+```sh
+cd server
+npm install
+cp .env.example .env
+npm run dev
+```
+
+The server listens on port 3001 by default and exposes `/health`. Set `VITE_MULTIPLAYER_SERVER_URL`
+in a root `.env` file if the frontend should connect to a different server URL. Configure
+`GEMMA_API_URL` and `GEMMA_API_KEY` in `server/.env` for model-backed theme words. The Gemma request
+is a placeholder integration point; without a key, the server uses a small local sample list.
+
+The current Wordle implementation uses six guesses (`ROWS = 6` in `src/utils.ts`); multiplayer
+uses the same limit. Round durations are five minutes, ten minutes, or unlimited.
 
 # Forking this project
 Anybody is welcome to fork this repository and do what they like with it, provided they follow the accompanying license (GPL-3.0).
