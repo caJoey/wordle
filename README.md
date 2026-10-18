@@ -2,6 +2,12 @@
 
 A multiplayer take on [Wordle](https://www.nytimes.com/games/wordle/). Up to 4 players join a lobby with a code, someone picks a theme ("animals", "the ocean", "music"...), and Google's Gemma model picks answer words that fit it. Everyone gets the same secret word and races to solve it in 6 guesses. You see your opponents' colors live (but not their letters), and the fastest solver wins the round.
 
+## Theme select flow
+<img width="774" height="245" alt="theme_select_flow" src="https://github.com/user-attachments/assets/cb937f5b-d2c4-42f6-a8b3-fe53604702aa" />
+
+## Bot flow
+<img width="437" height="235" alt="bot_flow" src="https://github.com/user-attachments/assets/b3352103-0577-4455-964c-69094dd88a96" />
+
 ## Setup
 
 Requires Node 22.
