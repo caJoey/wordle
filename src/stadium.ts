@@ -1,15 +1,39 @@
 /**
- * Stadium mode: a crowd meter for every player, driven by how well they're doing compared to the rest of the lobby.
+ * Stadium mode: a crowd meter for every player. It runs hot when you're close to the answer and when your
+ * race is on the line: neck and neck with a rival, or down to the guess that decides it. Other players'
+ * guesses move it by how much they change your race, so a guess from someone you aren't really racing
+ * barely registers.
  * Pure logic only, so it can be tested without a browser. Sound lives in crowd.ts, visuals in components/stadium.
  */
 import { COLS, ROWS, type LetterState, type PlayerView } from "../shared/protocol";
 
-/** How fast a burst of momentum fades. */
-const MOMENTUM_HALF_LIFE_MS = 5000;
+/** How fast a burst of momentum or pressure fades, and how long tension lingers once a race is settled. */
+const HALF_LIFE_MS = 5000;
 const MAX_MOMENTUM = 30;
 const MIN_MOMENTUM = -25;
-/** The form a lone player is measured against, roughly a couple of greens. */
-const SOLO_BASELINE = 0.3;
+/** How much of a rival's big play your crowd feels when it's neck and neck for the win... */
+const RIVAL_SHARE = 0.8;
+/** ...and their slips take some of the air out. */
+const RELIEF_SHARE = 0.7;
+/** A solve, as a play the rest of the lobby feels. */
+const SOLVE_SWING = 30;
+const MAX_PRESSURE = 30;
+const MIN_PRESSURE = -15;
+/** Stakes this high (a coin flip the next guess will settle) max out the stakes part of the meter. */
+const FULL_STAKES = 0.5;
+/** Above 1 so long shots barely register while real races are felt in full. */
+const STAKES_CURVE = 1.5;
+/** A lead change is only called for a real favorite. */
+const LEAD_ODDS = 0.4;
+const LEAD_MARGIN = 0.2;
+
+// The race model. The chance a guess solves it is a logistic in letters found and guesses used, fitted to
+// simulated games (always guessing a word that fits every clue), which finish in about 4 guesses on average.
+const SOLVE_BASE = -5.25;
+const SOLVE_PER_LETTER = 1.1;
+const SOLVE_PER_GUESS = 0.73;
+/** Each miss turns up about a quarter of the letters still missing. */
+const LETTERS_PER_MISS = 0.25;
 
 export type StadiumEventType = "solve" | "fail" | "cook" | "gasp" | "lead";
 
@@ -56,6 +80,152 @@ export function paceFactor(gapMs: number) {
 	return 0.7;
 }
 
+/** The most letters found in any one guess. Greens and yellows say about as much about how close you are. */
+export function lettersFound(colors: LetterState[][]) {
+	return Math.max(0, ...colors.map((r) => r.filter((s) => s === "🟩" || s === "🟨").length));
+}
+
+/** Chance the next guess solves it, for a player who has found `letters` letters in `used` guesses. */
+export function solveChance(letters: number, used: number) {
+	return 1 / (1 + Math.exp(-(SOLVE_BASE + SOLVE_PER_LETTER * letters + SOLVE_PER_GUESS * used)));
+}
+
+/** Where a player stands in the race. */
+export type Outlook = {
+	used: number;
+	/** chance[k]: the chance of solving on guess k. Whatever's left over is the chance of not solving. */
+	chance: number[];
+	solved: boolean;
+	solveMs?: number;
+};
+
+export function outlook(p: PlayerView): Outlook {
+	const used = p.colors.length;
+	const chance: number[] = Array(ROWS + 1).fill(0);
+	if (p.solved) chance[used] = 1;
+	else if (!p.done) {
+		let letters = lettersFound(p.colors);
+		let left = 1;
+		for (let k = used + 1; k <= ROWS; ++k) {
+			chance[k] = left * solveChance(letters, k - 1);
+			left -= chance[k];
+			letters += (COLS - letters) * LETTERS_PER_MISS;
+		}
+	}
+	return { used, chance, solved: p.solved, solveMs: p.solveMs };
+}
+
+function total(o: Outlook) {
+	return o.chance.reduce((a, b) => a + b, 0);
+}
+
+/** When both solve in as many guesses, the chance `a` got there first. */
+function tieBreak(a: Outlook, b: Outlook) {
+	if (a.solved !== b.solved) return a.solved ? 1 : 0;
+	if (!a.solved || a.solveMs === b.solveMs) return 0.5;
+	return (a.solveMs ?? 0) < (b.solveMs ?? 0) ? 1 : 0;
+}
+
+/**
+ * Chance `a` finishes ahead of `b`, ranked like the server does: solvers first, then fewer guesses, then
+ * sooner. Two players who both miss are a coin flip.
+ */
+export function beats(a: Outlook, b: Outlook) {
+	const tie = tieBreak(a, b);
+	// b solves after guess k, or not at all
+	let after = 1 - total(b);
+	let win = 0.5 * (1 - total(a)) * after;
+	for (let k = ROWS; k >= 1; --k) {
+		win += a.chance[k] * (after + tie * b.chance[k]);
+		after += b.chance[k];
+	}
+	return win;
+}
+
+/** The two ways the next guess can go: the chance it solves it, and the outlook after a hit or a miss. */
+function nextGuess(o: Outlook): [number, Outlook, Outlook] | undefined {
+	const k = o.used + 1;
+	const h = o.chance[k];
+	if (o.solved || !h) return;
+	const hit: number[] = Array(ROWS + 1).fill(0);
+	hit[k] = 1;
+	return [
+		h,
+		// Anyone already solved in as many guesses got there first
+		{ used: k, chance: hit, solved: true, solveMs: Infinity },
+		{ used: k, chance: o.chance.map((c, i) => (i > k ? c / (1 - h) : 0)), solved: false },
+	];
+}
+
+/**
+ * How much a matchup can swing on the next guess from either side: about 0 when it's settled or nobody's
+ * close to solving, highest when it's a coin flip that the next guess will decide.
+ */
+function matchupStakes(me: Outlook, rival: Outlook) {
+	const now = beats(rival, me);
+	let squares = 0;
+	for (const side of [me, rival]) {
+		const next = nextGuess(side);
+		if (!next) continue;
+		const [h, hit, miss] = next;
+		const after = (o: Outlook) => (side === me ? beats(rival, o) : beats(o, me));
+		const swing = h * Math.abs(after(hit) - now) + (1 - h) * Math.abs(after(miss) - now);
+		squares += swing * swing;
+	}
+	return Math.sqrt(squares);
+}
+
+/** How much the next guess decides whether you solve it at all, which matters most on your last shots. */
+function solveStakes(me: Outlook) {
+	const next = nextGuess(me);
+	if (!next) return 0;
+	const [h, , miss] = next;
+	const solves = total(me);
+	return h * (1 - solves) + (1 - h) * (solves - total(miss));
+}
+
+/**
+ * What's riding on the next guesses for `me`, 0..1. Each rival counts by how much their matchup with you
+ * could decide the round (`weights`, 0..1). The tightest race counts most, a pack of close rivals adds a little.
+ */
+function raceStakes(me: Outlook, rivals: Outlook[], weights: number[]) {
+	let sum = solveStakes(me) ** 4;
+	rivals.forEach((r, i) => (sum += (weights[i] * matchupStakes(me, r)) ** 4));
+	return Math.min(1, sum ** 0.25 / FULL_STAKES) ** STAKES_CURVE;
+}
+
+/** Each player's chance of winning the round: solving it in the fewest guesses, and first on a tie. */
+export function winChances(outlooks: Outlook[]) {
+	return outlooks.map((me, i) => {
+		let win = 0;
+		for (let k = 1; k <= ROWS; ++k) {
+			let clear = me.chance[k];
+			for (let j = 0; j < outlooks.length && clear; ++j) {
+				if (j === i) continue;
+				const o = outlooks[j];
+				let notAhead = 1 - total(o) + tieBreak(me, o) * o.chance[k];
+				for (let m = k + 1; m <= ROWS; ++m) notAhead += o.chance[m];
+				clear *= notAhead;
+			}
+			win += clear;
+		}
+		return win;
+	});
+}
+
+/**
+ * How much a matchup could decide the round, 0..1, from the two players' chances of winning it. Contenders
+ * count in full; a battle at the back of a big lobby, or for second once someone's out of reach, barely counts.
+ */
+function relevance(a: number, b: number) {
+	return Math.min(1, 2 * (a + b));
+}
+
+/** How open a matchup is, from the chance one finishes ahead: 1 for a coin flip, about 0 when it's a foregone conclusion. */
+function openness(ahead: number) {
+	return (4 * ahead * (1 - ahead)) ** 2;
+}
+
 export type Level = { min: number; label: string; tier: number; };
 
 export const LEVELS: Level[] = [
@@ -79,20 +249,35 @@ type Track = {
 	lastGuessAt: number;
 	momentum: number;
 	momentumAt: number;
+	/** Felt from rivals' guesses: up when one closes in on you, down a little when one slips. */
+	pressure: number;
+	pressureAt: number;
+	/** Where they stood at the last update, to measure what each new guess changed. */
+	outlook?: Outlook;
+	/** Chance of winning the round, as of the last update. */
+	odds: number;
+	/** What their next guesses were worth, as of the last update. */
+	stakes: number;
+	/** Recent stakes, fading out, so a settled race doesn't go quiet the instant it's decided. */
+	tension: number;
+	tensionAt: number;
 	/** Set when a player has had their roar, so the meter can stay pinned. */
 	solved: boolean;
 	failed: boolean;
 };
 
+type Standings = { players: PlayerView[]; active: PlayerView[]; outlooks: Outlook[]; odds: number[]; stakes: number[]; };
+
 /**
  * Follows the lobby from snapshot to snapshot, remembering what each player has done so it can spot
- * big moments (events) and keep a decaying momentum bonus per player.
+ * big moments (events) and keep a decaying momentum and pressure per player.
  */
 export class StadiumTracker {
 	private tracks = new Map<string, Track>();
 	private started = false;
 	private anySolved = false;
 	private leader: string | undefined;
+	private memo: Standings | undefined;
 
 	/**
 	 * Feed the latest players. Returns the events since the previous update. The first update only
@@ -102,12 +287,17 @@ export class StadiumTracker {
 		const events: StadiumEvent[] = [];
 		const silent = !this.started;
 		this.started = true;
+		const { active, outlooks, odds, stakes } = this.standings(players);
+		// What each player's new guesses were worth to the crowd, by index in `active`, for everyone else's meters
+		const plays = new Map<number, number>();
 
-		for (const p of players) {
-			if (p.spectating) continue;
+		for (const [index, p] of active.entries()) {
 			let t = this.tracks.get(p.id);
 			if (!t) {
-				t = { guesses: 0, best: 0, lastGuessAt: now, momentum: 0, momentumAt: now, solved: false, failed: false };
+				t = {
+					guesses: 0, best: 0, lastGuessAt: now, momentum: 0, momentumAt: now, pressure: 0, pressureAt: now,
+					odds: 0, stakes: 0, tension: 0, tensionAt: now, solved: false, failed: false,
+				};
 				this.tracks.set(p.id, t);
 			}
 			const n = p.colors.length;
@@ -119,6 +309,9 @@ export class StadiumTracker {
 				this.anySolved ||= p.solved;
 				continue;
 			}
+			// Big plays in big moments: the same guess moves the crowd more when the race is on the line
+			const lift = 0.8 + 0.6 * t.stakes;
+			let play = 0;
 			for (let i = t.guesses; i < n; ++i) {
 				const row = p.colors[i];
 				const score = rowScore(row);
@@ -126,21 +319,26 @@ export class StadiumTracker {
 				const pace = paceFactor(now - t.lastGuessAt);
 				const guesses = i + 1;
 				t.lastGuessAt = now;
+				let swing = 0;
 				if (greens(row) === COLS) {
 					t.solved = true;
 					events.push({ type: "solve", playerId: p.id, guesses, first: !this.anySolved });
 					this.anySolved = true;
+					play += SOLVE_SWING;
 				} else if (gain >= 3 || (greens(row) >= 3 && gain > 0)) {
-					this.bump(t, now, gain * 4 * pace);
+					swing = gain * 4 * pace;
 					events.push({ type: "cook", playerId: p.id, guesses });
 				} else if (guesses > 1 && (score <= 1 || score <= t.best - 4)) {
-					this.bump(t, now, -15);
+					swing = -15;
 					events.push({ type: "gasp", playerId: p.id, guesses });
 				} else if (gain > 0) {
-					this.bump(t, now, gain * 2 * pace);
+					swing = gain * 2 * pace;
 				}
+				if (swing) this.bump(t, now, swing * lift);
+				play += swing;
 				t.best = Math.max(t.best, score);
 			}
+			if (play) plays.set(index, play);
 			t.guesses = n;
 			if (!t.failed && p.done && !p.solved && n >= ROWS) {
 				t.failed = true;
@@ -148,43 +346,88 @@ export class StadiumTracker {
 			}
 		}
 
-		// A lead change is only worth calling once someone has built a real lead
-		const ranked = this.hypes(players, now).sort((a, b) => b.hype - a.hype);
-		const top = ranked[0];
-		if (top && ranked.length > 1 && top.hype >= 60 && top.hype - ranked[1].hype >= 8) {
-			if (!silent && this.leader && top.id !== this.leader && !events.some((e) => e.type === "solve")) {
-				events.push({ type: "lead", playerId: top.id, guesses: this.tracks.get(top.id)?.guesses ?? 0 });
+		// Everyone else feels a play by how much that player matters to their race: in full when it's neck
+		// and neck for the win, hardly at all from someone way off the pace or already out of it
+		for (const [r, play] of plays) {
+			const rival = this.tracks.get(active[r].id)!;
+			const before = rival.outlook;
+			if (!before) continue;
+			active.forEach((p, i) => {
+				const t = this.tracks.get(p.id)!;
+				if (i === r || p.done || !t.outlook) return;
+				// Judged both before and after the guess, so a rival catching up counts as much as one pulling away
+				const open = Math.max(openness(beats(before, t.outlook)), openness(beats(outlooks[r], t.outlook)));
+				const matters = open * Math.max(relevance(t.odds, rival.odds), relevance(odds[i], odds[r]));
+				this.press(t, now, matters * play * (play > 0 ? RIVAL_SHARE : RELIEF_SHARE));
+			});
+		}
+		active.forEach((p, i) => {
+			const t = this.tracks.get(p.id)!;
+			t.tension = Math.max(t.stakes, fade(t.tension, now - t.tensionAt));
+			t.tensionAt = now;
+			t.outlook = outlooks[i];
+			t.odds = odds[i];
+			t.stakes = stakes[i];
+		});
+
+		// A lead change is only worth calling once someone is a real favorite
+		const ranked = active.map((p, i) => ({ p, odds: odds[i] })).sort((a, b) => b.odds - a.odds);
+		const [top, second] = ranked;
+		if (top && second && top.odds >= LEAD_ODDS && top.odds - second.odds >= LEAD_MARGIN) {
+			// Getting the lead back by sitting on a solve while a rival slips isn't news
+			if (!silent && this.leader && top.p.id !== this.leader && !top.p.solved && !events.some((e) => e.type === "solve")) {
+				events.push({ type: "lead", playerId: top.p.id, guesses: top.p.colors.length });
 			}
-			this.leader = top.id;
+			this.leader = top.p.id;
 		}
 
 		return events.sort((a, b) => EVENT_PRIORITY[a.type] - EVENT_PRIORITY[b.type]);
 	}
 
 	private bump(t: Track, now: number, amount: number) {
-		t.momentum = clamp(this.momentum(t, now) + amount, MIN_MOMENTUM, MAX_MOMENTUM);
+		t.momentum = clamp(fade(t.momentum, now - t.momentumAt) + amount, MIN_MOMENTUM, MAX_MOMENTUM);
 		t.momentumAt = now;
 	}
 
-	private momentum(t: Track, now: number) {
-		return t.momentum * Math.pow(0.5, (now - t.momentumAt) / MOMENTUM_HALF_LIFE_MS);
+	private press(t: Track, now: number, amount: number) {
+		t.pressure = clamp(fade(t.pressure, now - t.pressureAt) + amount, MIN_PRESSURE, MAX_PRESSURE);
+		t.pressureAt = now;
+	}
+
+	/** Everyone's place in the race. Worked out once per snapshot, since the meters redraw several times a second. */
+	private standings(players: PlayerView[]): Standings {
+		if (this.memo?.players !== players) {
+			const active = players.filter((p) => !p.spectating);
+			const outlooks = active.map(outlook);
+			const odds = winChances(outlooks);
+			const stakes = outlooks.map((me, i) => {
+				const rivals = outlooks.filter((_, j) => j !== i);
+				const weights = odds.filter((_, j) => j !== i).map((o) => relevance(odds[i], o));
+				return raceStakes(me, rivals, weights);
+			});
+			this.memo = { players, active, outlooks, odds, stakes };
+		}
+		return this.memo;
 	}
 
 	/** Crowd meter 0..100 for every playing player. */
 	hypes(players: PlayerView[], now: number) {
-		const active = players.filter((p) => !p.spectating);
-		const forms = new Map(active.map((p) => [p.id, form(p.colors)]));
-		return active.map((p) => {
-			const t = this.tracks.get(p.id);
+		const { active, stakes } = this.standings(players);
+		return active.map((p, i) => {
 			if (p.solved) return { id: p.id, hype: 100 };
-			const mine = forms.get(p.id) ?? 0;
-			const others = active.filter((o) => o.id !== p.id).map((o) => forms.get(o.id) ?? 0);
-			const field = others.length ? others.reduce((a, b) => a + b, 0) / others.length : SOLO_BASELINE;
-			let hype = 35 + 40 * mine + 60 * (mine - field) + (t ? this.momentum(t, now) : 0);
+			const t = this.tracks.get(p.id);
+			const swings = t ? fade(t.momentum, now - t.momentumAt) + fade(t.pressure, now - t.pressureAt) : 0;
+			const tension = Math.max(stakes[i], t ? fade(t.tension, now - t.tensionAt) : 0);
+			// A base hum, then how close you are, what's riding on the next guesses, and the bursts from recent plays
+			let hype = 20 + 30 * form(p.colors) + 45 * tension + swings;
 			if (p.done) hype = Math.min(hype, 12);
 			return { id: p.id, hype: clamp(Math.round(hype), 0, 100) };
 		});
 	}
+}
+
+function fade(amount: number, ms: number) {
+	return amount * Math.pow(0.5, ms / HALF_LIFE_MS);
 }
 
 function clamp(n: number, lo: number, hi: number) {
